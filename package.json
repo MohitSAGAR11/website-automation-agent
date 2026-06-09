@@ -1,0 +1,22 @@
+{
+  "name": "website-automation-agent",
+  "version": "1.0.0",
+  "description": "Intelligent website automation agent using Playwright and OpenRouter AI",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "install:browsers": "npx playwright install chromium",
+    "test": "node src/index.js"
+  },
+  "dependencies": {
+    "playwright": "^1.44.0",
+    "dotenv": "^16.4.5",
+    "winston": "^3.13.0",
+    "chalk": "^4.1.2",
+    "axios": "^1.7.2"
+  },
+  "type": "commonjs",
+  "keywords": ["automation", "playwright", "ai-agent", "openrouter"],
+  "author": "",
+  "license": "ISC"
+}
