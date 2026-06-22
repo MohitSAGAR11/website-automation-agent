@@ -89,16 +89,34 @@ async function navigate_to_url(url) {
   }
 }
 
-async function take_screenshot(label = 'step') {
+/**
+ * Take a viewport screenshot.
+ * @param {string} label      - Human-readable label used in the filename.
+ * @param {string|null} selector - If provided, the element will be scrolled to
+ *                                 the CENTER of the viewport before the shot is
+ *                                 taken, so it is never cropped to an edge.
+ */
+async function take_screenshot(label = 'step', selector = null) {
   screenshotCounter++;
   const filename = `${String(screenshotCounter).padStart(3, '0')}_${label.replace(/\s+/g, '_')}.png`;
   const filepath = path.join(SCREENSHOT_DIR, filename);
 
-  logger.agentAction('take_screenshot', { filename });
+  logger.agentAction('take_screenshot', { filename, selector });
 
   if (!pageInstance) throw new Error('Browser not open. Call open_browser() first.');
 
   try {
+    // If a selector is given, center it in the viewport before capturing
+    if (selector) {
+      try {
+        await pageInstance.$eval(selector, node =>
+          node.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'center' })
+        );
+        await pageInstance.waitForTimeout(400);
+      } catch (_) {
+        // If centering fails, proceed with current scroll position
+      }
+    }
     await pageInstance.screenshot({ path: filepath, fullPage: false });
     logger.agentSuccess(`Screenshot saved: ${filepath}`);
     return filepath;
@@ -168,10 +186,14 @@ async function scroll(deltaY = 400, selector = null) {
 
   try {
     if (selector) {
+      // Scroll element to the CENTER of the viewport for a clear view
       const el = await pageInstance.$(selector);
       if (el) {
-        await el.scrollIntoViewIfNeeded();
-        logger.agentSuccess(`Scrolled element into view: ${selector}`);
+        await el.evaluate(node =>
+          node.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' })
+        );
+        await pageInstance.waitForTimeout(600); // let smooth scroll settle
+        logger.agentSuccess(`Scrolled element to center of viewport: ${selector}`);
       } else {
         throw new Error(`Selector not found: ${selector}`);
       }
@@ -182,6 +204,30 @@ async function scroll(deltaY = 400, selector = null) {
     }
   } catch (err) {
     logger.agentError('Scroll failed', err);
+    throw err;
+  }
+}
+
+
+/**
+ * Scroll any element to the vertical/horizontal center of the viewport.
+ * Always use this before taking a screenshot of a specific element.
+ */
+async function scroll_to_center(selector) {
+  logger.agentAction('scroll_to_center', { selector });
+
+  if (!pageInstance) throw new Error('Browser not open. Call open_browser() first.');
+
+  try {
+    await pageInstance.waitForSelector(selector, { timeout: 10000 });
+    await pageInstance.$eval(selector, node =>
+      node.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' })
+    );
+    await pageInstance.waitForTimeout(600); // let scroll animation settle
+    logger.agentSuccess(`Element centered in viewport: ${selector}`);
+    return true;
+  } catch (err) {
+    logger.agentError(`scroll_to_center failed for: ${selector}`, err);
     throw err;
   }
 }
@@ -294,6 +340,7 @@ module.exports = {
   click_element,
   send_keys,
   scroll,
+  scroll_to_center,
   double_click,
   get_page_content,
   wait_for_element,

@@ -16,16 +16,17 @@ const SYSTEM_PROMPT = `You are an expert browser automation agent. Your job is t
 to complete tasks by selecting the right tool at each step.
 
 Available tools:
-- navigate_to_url(url)         : Go to a URL
-- take_screenshot(label)       : Capture the screen
-- scroll(deltaY, selector)     : Scroll the page
-- click_element(selector)      : Click a CSS selector
-- click_on_screen(x, y)        : Click by pixel coordinates
-- send_keys(text, selector)    : Fill a text input
-- double_click(x, y, selector) : Double-click
-- get_page_content()           : Get page structure / form elements
-- wait_for_element(selector)   : Wait for an element to appear
-- done(summary)                : Signal task completion
+- navigate_to_url(url)              : Go to a URL
+- take_screenshot(label, selector)  : Capture the screen. Pass selector to auto-center that element first.
+- scroll(deltaY, selector)          : Scroll the page or scroll an element to center of viewport
+- scroll_to_center(selector)        : Scroll a specific element to the exact center of the viewport
+- click_element(selector)           : Click a CSS selector
+- click_on_screen(x, y)             : Click by pixel coordinates
+- send_keys(text, selector)         : Fill a text input
+- double_click(x, y, selector)      : Double-click
+- get_page_content()                : Get page structure / form elements
+- wait_for_element(selector)        : Wait for an element to appear
+- done(summary)                     : Signal task completion
 
 Respond ONLY with a JSON object like:
 {
@@ -36,6 +37,10 @@ Respond ONLY with a JSON object like:
 
 Rules:
 - Always call get_page_content() or take_screenshot() to understand the page before clicking.
+- IMPORTANT: Before taking a screenshot of any input field or form element, ALWAYS call
+  scroll_to_center(selector) first so the element is perfectly centered in the viewport,
+  never stuck at the very top or bottom edge of the screen.
+- You may also pass a selector directly to take_screenshot(label, selector) to center in one step.
 - Use CSS selectors when possible for reliability.
 - The shadcn form preview button opens an interactive form dialog — look for a "Preview" tab or button.
 - Common shadcn form selectors: input[name="username"], input[name="email"], textarea, button[type="submit"].
@@ -47,10 +52,13 @@ async function dispatchTool(toolName, args = {}) {
       return tools.navigate_to_url(args.url);
 
     case "take_screenshot":
-      return tools.take_screenshot(args.label || "step");
+      return tools.take_screenshot(args.label || "step", args.selector ?? null);
 
     case "scroll":
       return tools.scroll(args.deltaY ?? 400, args.selector ?? null);
+
+    case "scroll_to_center":
+      return tools.scroll_to_center(args.selector);
 
     case "click_element":
       return tools.click_element(args.selector);
@@ -82,130 +90,13 @@ async function dispatchTool(toolName, args = {}) {
   }
 }
 
-const HEURISTIC_STEPS = [
-  {
-    tool: "take_screenshot",
-    args: { label: "initial" },
-    reasoning: "Capture initial page state",
-  },
-  {
-    tool: "get_page_content",
-    args: {},
-    reasoning: "Understand page structure and find form elements",
-  },
-  {
-    tool: "scroll",
-    args: { deltaY: 400 },
-    reasoning: "Scroll down to find the form preview section",
-  },
-  {
-    tool: "take_screenshot",
-    args: { label: "after_scroll" },
-    reasoning: "See what is visible after scrolling",
-  },
-  {
-    tool: "click_element",
-    args: {
-      selector:
-        '.tab-btn[data-value="preview"], button[data-value="preview"], [role="tab"]:first-child, .tab-btn:first-child',
-    },
-    reasoning: "Click Preview tab to ensure interactive form is visible",
-  },
-  {
-    tool: "take_screenshot",
-    args: { label: "preview_tab" },
-    reasoning: "Confirm preview tab is active",
-  },
-  {
-    tool: "wait_for_element",
-    args: {
-      selector: 'input[name="username"], #username, form input:first-of-type',
-      timeout: 5000,
-    },
-    reasoning: "Wait for form inputs to appear",
-  },
-  {
-    tool: "get_page_content",
-    args: {},
-    reasoning: "Re-scan page to confirm form inputs are present",
-  },
-
-  {
-    tool: "send_keys",
-    args: { text: "johndoe", selector: 'input[name="username"], #username' },
-    reasoning: "Fill the username field with johndoe",
-  },
-  {
-    tool: "take_screenshot",
-    args: { label: "username_filled" },
-    reasoning: "Confirm username was filled correctly",
-  },
-
-  {
-    tool: "send_keys",
-    args: {
-      text: "UI Component Bug Report",
-      selector: 'input[name="bugTitle"], #bugTitle, input[name="title"]',
-    },
-    reasoning: "Fill the bug title field",
-  },
-  {
-    tool: "take_screenshot",
-    args: { label: "title_filled" },
-    reasoning: "Confirm bug title was filled correctly",
-  },
-  
-  {
-    tool: "send_keys",
-    args: {
-      text: "Dropdown loses focus when scrolling inside a modal. Seen in Firefox 120+ and Chrome 119+.",
-      selector: 'textarea[name="description"], #description, form textarea',
-    },
-    reasoning: "Fill the description textarea with detailed bug information",
-  },
-  {
-    tool: "take_screenshot",
-    args: { label: "description_filled" },
-    reasoning: "Confirm description was filled correctly",
-  },
-  
-  {
-    tool: "click_element",
-    args: {
-      selector: 'button[type="submit"], .submit-btn, form button:last-of-type',
-    },
-    reasoning: "Click the Submit Report button",
-  },
-  {
-    tool: "take_screenshot",
-    args: { label: "form_submitted" },
-    reasoning: "Capture the result after form submission",
-  },
-
-  {
-    tool: "wait_for_element",
-    args: { selector: ".toast.show, #toast.show", timeout: 3000 },
-    reasoning: "Wait for submission confirmation toast",
-  },
-  {
-    tool: "take_screenshot",
-    args: { label: "toast_visible" },
-    reasoning: "Capture the success toast notification",
-  },
-  {
-    tool: "done",
-    args: {
-      summary:
-        "Form filled and submitted successfully. Fields: username=johndoe, bugTitle=UI Component Bug Report, description=detailed bug description. Toast confirmation appeared.",
-    },
-    reasoning: "Task complete — all fields filled and form submitted",
-  },
-];
-
-async function runAgent({ task, targetUrl = TARGET_URL, useAI = true }) {
+async function runAgent({ task, targetUrl = TARGET_URL }) {
   const apiKey = process.env.OPENROUTER_API_KEY;
-  const hasApiKey = apiKey && apiKey !== "your_openrouter_api_key_here";
-  const aiEnabled = useAI && hasApiKey;
+  if (!apiKey || apiKey === "your_openrouter_api_key_here") {
+    throw new Error(
+      "OPENROUTER_API_KEY is not set. Please configure a valid API key in your .env file.",
+    );
+  }
 
   logger.info("═══════════════════════════════════════════════════════");
   logger.info("       WEBSITE AUTOMATION AGENT — STARTING             ");
@@ -213,10 +104,8 @@ async function runAgent({ task, targetUrl = TARGET_URL, useAI = true }) {
   logger.info("Task:");
   task.split("\n").forEach((line) => logger.info(`  ${line}`));
   logger.info(`Target  : ${targetUrl}`);
-  logger.info(
-    `Model   : ${aiEnabled ? OPENROUTER_MODEL : "Heuristic (no API key)"}`,
-  );
-  logger.info(`Mode    : ${aiEnabled ? "AI-Driven" : "Rule-Based Fallback"}`);
+  logger.info(`Model   : ${OPENROUTER_MODEL}`);
+  logger.info(`Mode    : AI-Driven`);
   logger.info("─────────────────────────────────────────────────────");
 
   // ── Step 1: Open browser ──────────────────────────────────────────────────
@@ -225,7 +114,6 @@ async function runAgent({ task, targetUrl = TARGET_URL, useAI = true }) {
 
   const conversationHistory = [];
   let stepCount = 0;
-  let heuristicIdx = 0;
 
   // ── Step 2: Agent loop ────────────────────────────────────────────────────
   while (stepCount < MAX_STEPS) {
@@ -234,20 +122,15 @@ async function runAgent({ task, targetUrl = TARGET_URL, useAI = true }) {
       `\n─── Step ${stepCount}/${MAX_STEPS} ─────────────────────────────`,
     );
 
-    let action;
+    // Gather current page state for the AI
+    let pageState;
+    try {
+      pageState = await tools.get_page_content();
+    } catch (_) {
+      pageState = { title: "unknown", inputs: [], labels: [] };
+    }
 
-    if (aiEnabled) {
-      // ── AI-driven decision ─────────────────────────────────────────────
-
-      // Gather current page state for the AI
-      let pageState;
-      try {
-        pageState = await tools.get_page_content();
-      } catch (_) {
-        pageState = { title: "unknown", inputs: [], labels: [] };
-      }
-
-      const userMessage = `
+    const userMessage = `
 Task: ${task}
 Step: ${stepCount}
 Current URL: ${pageState.url || targetUrl}
@@ -258,38 +141,23 @@ Page excerpt: ${pageState.bodyText?.substring(0, 500) || ""}
 
 What should the agent do next? Respond with the JSON action object.`;
 
-      conversationHistory.push({ role: "user", content: userMessage });
+    conversationHistory.push({ role: "user", content: userMessage });
 
-      try {
-        const aiResponse = await chat(conversationHistory, SYSTEM_PROMPT);
-        conversationHistory.push({ role: "assistant", content: aiResponse });
+    let action;
+    try {
+      const aiResponse = await chat(conversationHistory, SYSTEM_PROMPT);
+      conversationHistory.push({ role: "assistant", content: aiResponse });
 
-        logger.agentThink(aiResponse.substring(0, 200));
-        action = parseActionFromResponse(aiResponse);
+      logger.agentThink(aiResponse.substring(0, 200));
+      action = parseActionFromResponse(aiResponse);
 
-        if (!action) {
-          logger.warn("Could not parse action from AI response, retrying...");
-          continue;
-        }
-      } catch (err) {
-        logger.agentError(
-          "AI call failed, switching to heuristic for this step",
-          err,
-        );
-        action = HEURISTIC_STEPS[heuristicIdx] || {
-          tool: "done",
-          args: { summary: "Fallback complete" },
-        };
-        heuristicIdx++;
+      if (!action) {
+        logger.warn("Could not parse action from AI response, retrying...");
+        continue;
       }
-    } else {
-      // ── Heuristic fallback ────────────────────────────────────────────
-      if (heuristicIdx >= HEURISTIC_STEPS.length) {
-        logger.info("All heuristic steps exhausted.");
-        break;
-      }
-      action = HEURISTIC_STEPS[heuristicIdx];
-      heuristicIdx++;
+    } catch (err) {
+      logger.agentError("AI call failed", err);
+      continue;
     }
 
     // ── Execute the chosen tool ───────────────────────────────────────────
@@ -305,12 +173,10 @@ What should the agent do next? Respond with the JSON action object.`;
       try {
         await tools.take_screenshot(`error_step${stepCount}`);
       } catch (_) {}
-      if (aiEnabled) {
-        conversationHistory.push({
-          role: "user",
-          content: `Tool "${action.tool}" failed: ${err.message}. Try an alternative approach.`,
-        });
-      }
+      conversationHistory.push({
+        role: "user",
+        content: `Tool "${action.tool}" failed: ${err.message}. Try an alternative approach.`,
+      });
       continue;
     }
 
