@@ -27,6 +27,7 @@ let screenshotCounter = 0;
 
 async function open_browser() {
   logger.agentAction('open_browser', { headless: HEADLESS });
+  screenshotCounter = 0; // Reset screenshot counter for the new run
 
   try {
     const executablePath = process.env.CHROME_PATH || '/opt/google/chrome/chrome';
@@ -99,7 +100,14 @@ async function navigate_to_url(url) {
 async function take_screenshot(label = 'step', selector = null) {
   screenshotCounter++;
   const filename = `${String(screenshotCounter).padStart(3, '0')}_${label.replace(/\s+/g, '_')}.png`;
-  const filepath = path.join(SCREENSHOT_DIR, filename);
+  const currentScreenshotDir = process.env.SCREENSHOT_DIR || './screenshots';
+  
+  // Ensure run-specific screenshot directory exists
+  if (!fs.existsSync(currentScreenshotDir)) {
+    fs.mkdirSync(currentScreenshotDir, { recursive: true });
+  }
+  
+  const filepath = path.join(currentScreenshotDir, filename);
 
   logger.agentAction('take_screenshot', { filename, selector });
 

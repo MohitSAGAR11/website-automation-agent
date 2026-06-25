@@ -2,15 +2,16 @@ const tools = require("../tools/browserTools");
 const {
   chat,
   parseActionFromResponse,
-  OPENROUTER_MODEL,
-} = require("./openRouterClient");
+  GROQ_MODEL,
+} = require("./GroqClient");
 const logger = require("../utils/logger");
-require("dotenv").config({ path: require("path").resolve(__dirname, "..", "..", ".env") });
+require("dotenv").config({
+  path: require("path").resolve(__dirname, "..", "..", ".env"),
+});
 
 const MAX_STEPS = parseInt(process.env.MAX_STEPS || "20");
 const TARGET_URL =
   process.env.TARGET_URL || "https://ui.shadcn.com/docs/forms/react-hook-form";
-
 
 const SYSTEM_PROMPT = `You are an expert browser automation agent. Your job is to control a web browser
 to complete tasks by selecting the right tool at each step.
@@ -91,10 +92,10 @@ async function dispatchTool(toolName, args = {}) {
 }
 
 async function runAgent({ task, targetUrl = TARGET_URL }) {
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey || apiKey === "your_openrouter_api_key_here") {
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey || apiKey === "your_groq_api_key_here") {
     throw new Error(
-      "OPENROUTER_API_KEY is not set. Please configure a valid API key in your .env file.",
+      "GROQ_API_KEY is not set. Please configure a valid API key in your .env file.",
     );
   }
 
@@ -104,7 +105,7 @@ async function runAgent({ task, targetUrl = TARGET_URL }) {
   logger.info("Task:");
   task.split("\n").forEach((line) => logger.info(`  ${line}`));
   logger.info(`Target  : ${targetUrl}`);
-  logger.info(`Model   : ${OPENROUTER_MODEL}`);
+  logger.info(`Model   : ${GROQ_MODEL}`);
   logger.info(`Mode    : AI-Driven`);
   logger.info("─────────────────────────────────────────────────────");
 
@@ -202,7 +203,9 @@ What should the agent do next? Respond with the JSON action object.`;
   try {
     await tools.take_screenshot("final_state");
   } catch (_) {
-    logger.warn("Could not take final screenshot (page may already be closed).");
+    logger.warn(
+      "Could not take final screenshot (page may already be closed).",
+    );
   }
   try {
     await tools.close_browser();

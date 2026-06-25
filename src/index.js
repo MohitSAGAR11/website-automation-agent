@@ -26,7 +26,6 @@ Take screenshots at each important step.
     await runAgent({
       task: TASK,
       targetUrl: process.env.TARGET_URL || 'https://ui.shadcn.com/docs/forms/react-hook-form',
-      useAI: true
     });
 
     process.exit(0);
