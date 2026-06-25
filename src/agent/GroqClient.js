@@ -29,14 +29,14 @@ async function chat(messages, systemPrompt = "") {
   const payload = {
     model: MODEL,
     messages: [
-      ...(systemPrompt ? [{ role: "system", content: systemPrompt }] : []),
+      ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
       ...messages,
     ],
-    temperature: 0.1,
-    max_tokens: 512,
+    temperature: 0,      // deterministic — faster token generation
+    max_tokens: 200,     // JSON action fits in <100 tokens; 200 is generous
   };
 
-  const MAX_RETRIES = 4;
+  const MAX_RETRIES = 3;
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
@@ -55,9 +55,9 @@ async function chat(messages, systemPrompt = "") {
       );
 
       const content = response.data?.choices?.[0]?.message?.content;
-      if (!content) throw new Error("Empty response from API");
+      if (!content) throw new Error('Empty response from API');
 
-      logger.debug("API response received", { length: content.length });
+      logger.debug('API response received', { length: content.length });
       return content;
     } catch (err) {
       const status = err.response?.status;
@@ -65,12 +65,16 @@ async function chat(messages, systemPrompt = "") {
         err.response?.data?.error?.message || err.message || String(err);
 
       if (status === 429 && attempt < MAX_RETRIES - 1) {
-        // Parse the suggested wait time from error message e.g. "Please try again in 7.03s"
+        // Parse suggested wait from Retry-After header or error message
+        const retryAfterHeader = err.response?.headers?.['retry-after'];
         const retryMatch = errMsg.match(/try again in (\d+\.?\d*)s/i);
-        const suggestedWait = retryMatch
-          ? Math.ceil(parseFloat(retryMatch[1]) * 1000) + 1000
-          : null;
-        const backoffWait = [8000, 20000, 40000][attempt] || 40000;
+        const suggestedWait =
+          retryAfterHeader
+            ? parseInt(retryAfterHeader, 10) * 1000 + 500
+            : retryMatch
+            ? Math.ceil(parseFloat(retryMatch[1]) * 1000) + 500
+            : null;
+        const backoffWait = [5000, 15000][attempt] || 15000;
         const waitMs = suggestedWait || backoffWait;
 
         logger.warn(
@@ -80,6 +84,7 @@ async function chat(messages, systemPrompt = "") {
         continue;
       }
 
+      // Non-429 errors: log and throw immediately (no point retrying)
       if (err.response) {
         logger.agentError(`API error ${status}: ${errMsg}`);
       } else {

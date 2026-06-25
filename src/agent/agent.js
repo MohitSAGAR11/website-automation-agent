@@ -9,39 +9,38 @@ require("dotenv").config({
   path: require("path").resolve(__dirname, "..", "..", ".env"),
 });
 
-const MAX_STEPS = parseInt(process.env.MAX_STEPS || "20");
+const MAX_STEPS = parseInt(process.env.MAX_STEPS || "30");
 const TARGET_URL =
   process.env.TARGET_URL || "https://ui.shadcn.com/docs/forms/react-hook-form";
 
-const SYSTEM_PROMPT = `You are an expert browser automation agent that controls a real web browser to complete tasks.
+const SYSTEM_PROMPT = `You are an expert browser automation agent that controls a real web browser.
 
-Available tools:
-- navigate_to_url(url)             : Navigate to a URL
-- click_element(selector)          : Click a CSS selector
-- send_keys(text, selector)        : Type text into an input. Append \\n to submit/press Enter (e.g. "search term\\n").
-- scroll(deltaY, selector)         : Scroll the page or an element into view
-- scroll_to_center(selector)       : Scroll an element to the exact center of the viewport
-- wait_for_element(selector)       : Wait for an element to appear
-- get_page_content()               : Refresh page state (only call this AFTER navigating or waiting — NOT at the start of a step)
-- take_screenshot(label, selector) : Capture screenshot, optionally centered on a selector
-- click_on_screen(x, y)            : Click at pixel coordinates
-- double_click(x, y, selector)     : Double-click
-- done(summary)                    : Signal task is complete
+Tools:
+- navigate_to_url(url)
+- click_element(selector)
+- send_keys(text, selector)  — append \\n to submit (triggers real Enter keypress)
+- scroll(deltaY, selector)
+- scroll_to_center(selector)
+- wait_for_element(selector)
+- get_page_content()          — only call AFTER navigation/wait, NOT every step
+- take_screenshot(label, selector)
+- click_on_screen(x, y)
+- double_click(x, y, selector)
+- done(summary)              — call immediately when task is complete
 
-CRITICAL RULES:
-1. The current page state (URL, title, inputs, page text) is ALREADY PROVIDED in each message. Do NOT call get_page_content() as your first action — it wastes steps. Use the provided state.
-2. Only call get_page_content() after a navigation, wait, or major action when you need updated info.
-3. To search or submit a form, append \\n to the text in send_keys instead of clicking a separate button.
-4. Prefer short, reliable CSS selectors (IDs, name attributes, aria-labels) over long nested chains.
-5. If a selector fails, try a simpler alternative — do not repeat the same failing selector.
-6. Call done() as soon as the task is successfully completed.
+RULES:
+1. Page state is already in the message. Do NOT call get_page_content() unless you just navigated or waited.
+2. Append \\n to send_keys text to submit forms — this fires a real Enter keypress.
+3. Selector priority: id > name > aria-label > role > data-testid > text content. Never repeat a failed selector.
+4. Call done() the moment the task is complete — do not take extra steps.
+5. Be decisive. Pick the most direct path. Avoid unnecessary screenshots or scrolls.
+6. For links (tag=a), ALWAYS use navigate_to_url(href) rather than click_element — href is in the Inputs list.
+7. Do NOT take repeated screenshots — act on the page state provided. Screenshot only as a last resort.
+8. If you see a STUCK WARNING, the URL has not changed — try a completely different tool or approach.
 
-Respond ONLY with a valid JSON object — no extra text:
-{
-  "tool": "tool_name",
-  "args": { ... },
-  "reasoning": "brief reason"
-}`;
+Respond ONLY with valid JSON — no markdown fences:
+{"tool": "tool_name", "args": {...}, "reasoning": "brief reason"}`;
+
 
 async function dispatchTool(toolName, args = {}) {
   switch (toolName) {
@@ -111,6 +110,21 @@ async function runAgent({ task, targetUrl = TARGET_URL }) {
 
   const conversationHistory = [];
   let stepCount = 0;
+  let consecutiveFailures = 0;
+  const MAX_CONSECUTIVE_FAILURES = 4;
+
+  // Track which tool types need a fresh page state vs. which don't change the page
+  const PAGE_CHANGING_TOOLS = new Set([
+    'navigate_to_url', 'click_element', 'click_on_screen',
+    'double_click', 'send_keys', 'wait_for_element', 'get_page_content'
+  ]);
+
+  let cachedPageState = null;     // last fetched page state
+  let pageStateStale = true;      // must re-fetch before next step?
+  let lastUrl = targetUrl;        // for stagnation detection
+  let urlUnchangedSteps = 0;      // consecutive steps without a URL change
+  const STAGNATION_THRESHOLD = 3; // warn AI after this many stuck steps
+  const STAGNATION_SKIP_TOOLS = new Set(['scroll', 'take_screenshot', 'scroll_to_center']);
 
   // ── Step 2: Agent loop ────────────────────────────────────────────────────
   while (stepCount < MAX_STEPS) {
@@ -119,13 +133,18 @@ async function runAgent({ task, targetUrl = TARGET_URL }) {
       `\n─── Step ${stepCount}/${MAX_STEPS} ─────────────────────────────`,
     );
 
-    // Gather current page state for the AI
-    let pageState;
-    try {
-      pageState = await tools.get_page_content();
-    } catch (_) {
-      pageState = { title: "unknown", inputs: [], labels: [] };
+    // ── Gather current page state (skip if cache is still valid) ──────────
+    if (pageStateStale || !cachedPageState) {
+      try {
+        cachedPageState = await tools.get_page_content();
+        pageStateStale = false;
+      } catch (_) {
+        cachedPageState = { title: 'unknown', inputs: [], labels: [] };
+        pageStateStale = false;
+      }
     }
+
+    const pageState = cachedPageState;
 
     // Select interactive elements in viewport, fallback to all visible if none in viewport
     const inViewportElements = pageState.inputs?.filter((i) => i.visible && i.inViewport) || [];
@@ -140,61 +159,95 @@ async function runAgent({ task, targetUrl = TARGET_URL }) {
       name: e.name || undefined,
       placeholder: e.placeholder || undefined,
       text: e.textContent || undefined,
-      aria: e.ariaLabel || undefined
+      aria: e.ariaLabel || undefined,
+      role: e.role || undefined,
+      testId: e.testId || undefined,
+      // Include href for links so the AI can navigate_to_url() directly
+      href: e.href || undefined
     }));
 
-    // Compress context: include task only on first step, use single line structure for subsequent steps
-    let userMessage;
-    if (stepCount === 1) {
-      userMessage = `Task: ${task}
-Step: 1
-URL: ${pageState.url || targetUrl}
-Title: ${pageState.title || "N/A"}
-Inputs: ${JSON.stringify(compactElements)}
-Excerpt: ${pageState.bodyText?.substring(0, 500) || ""}`;
+    // Stagnation detection: warn the AI if URL hasn't changed for several steps
+    const currentUrl = pageState.url || targetUrl;
+    let stagnationWarning = '';
+    if (currentUrl === lastUrl) {
+      urlUnchangedSteps++;
+      if (urlUnchangedSteps >= STAGNATION_THRESHOLD) {
+        stagnationWarning = ` | ⚠️ STUCK WARNING: URL unchanged for ${urlUnchangedSteps} steps — try a completely different approach`;
+      }
     } else {
-      userMessage = `Step: ${stepCount} | URL: ${pageState.url || targetUrl} | Title: ${pageState.title || "N/A"} | Inputs: ${JSON.stringify(compactElements)} | Excerpt: ${pageState.bodyText?.substring(0, 500) || ""}`;
+      lastUrl = currentUrl;
+      urlUnchangedSteps = 0;
     }
 
-    conversationHistory.push({ role: "user", content: userMessage });
+    // Include body text only for first 5 steps to reduce token usage
+    const includeBodyText = stepCount <= 5;
 
-    // Keep history trimmed to stay within TPM/RPM limits.
-    // Always preserve the very first message (which contains the full task description)
-    // so the agent never forgets the goal, then append the last 9 messages.
+    // Compress context: include task only on first step
+    let userMessage;
+    if (stepCount === 1) {
+      userMessage = `Task: ${task}\nStep: 1 | URL: ${currentUrl} | Title: ${pageState.title || 'N/A'}\nInputs: ${JSON.stringify(compactElements)}\nExcerpt: ${pageState.bodyText?.substring(0, 500) || ''}`;
+    } else {
+      userMessage = `Step:${stepCount} | URL:${currentUrl} | Title:${pageState.title || 'N/A'} | Inputs:${JSON.stringify(compactElements)}${
+        includeBodyText ? ` | Excerpt:${pageState.bodyText?.substring(0, 300) || ''}` : ''
+      }${stagnationWarning}`;
+    }
+
+    conversationHistory.push({ role: 'user', content: userMessage });
+
+
+    // Keep history trimmed: first 2 messages + last 8 recents (covers goal + recent context)
     let trimmedHistory;
     if (conversationHistory.length <= 10) {
       trimmedHistory = [...conversationHistory];
     } else {
       trimmedHistory = [
         conversationHistory[0],
-        ...conversationHistory.slice(-9)
+        conversationHistory[1],
+        ...conversationHistory.slice(-8)
       ];
     }
 
     let action;
     try {
       const aiResponse = await chat(trimmedHistory, SYSTEM_PROMPT);
-      conversationHistory.push({ role: "assistant", content: aiResponse });
+      conversationHistory.push({ role: 'assistant', content: aiResponse });
 
       logger.agentThink(aiResponse.substring(0, 200));
       action = parseActionFromResponse(aiResponse);
 
       if (!action) {
-        logger.warn("Could not parse action from AI response, retrying...");
+        logger.warn('Could not parse action from AI response, retrying...');
+        consecutiveFailures++;
+        if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+          logger.warn(`${MAX_CONSECUTIVE_FAILURES} consecutive parse failures — aborting.`);
+          break;
+        }
         continue;
       }
+      consecutiveFailures = 0; // reset on success
     } catch (err) {
       logger.agentError(`AI call failed: ${err.message}`);
+      consecutiveFailures++;
+      if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+        logger.warn(`${MAX_CONSECUTIVE_FAILURES} consecutive AI failures — aborting.`);
+        break;
+      }
       continue;
     }
 
     // ── Execute the chosen tool ───────────────────────────────────────────
-    logger.agentThink(action.reasoning || "(no reasoning)");
+    logger.agentThink(action.reasoning || '(no reasoning)');
     logger.info(`Tool: ${action.tool} | Args: ${JSON.stringify(action.args)}`);
+
+    // Mark page state stale if this tool changes the page
+    if (PAGE_CHANGING_TOOLS.has(action.tool)) {
+      pageStateStale = true;
+    }
 
     let result;
     try {
       result = await dispatchTool(action.tool, action.args || {});
+      consecutiveFailures = 0;
     } catch (err) {
       logger.agentError(`Tool "${action.tool}" threw an error`, err);
       // Take a screenshot to aid debugging, then continue
@@ -202,20 +255,27 @@ Excerpt: ${pageState.bodyText?.substring(0, 500) || ""}`;
         await tools.take_screenshot(`error_step${stepCount}`);
       } catch (_) {}
       conversationHistory.push({
-        role: "user",
+        role: 'user',
         content: `Tool "${action.tool}" failed: ${err.message}. Try an alternative approach.`,
       });
+      consecutiveFailures++;
+      if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+        logger.warn(`${MAX_CONSECUTIVE_FAILURES} consecutive tool failures — aborting.`);
+        break;
+      }
+      // Page state is stale after an error too
+      pageStateStale = true;
       continue;
     }
 
     // ── Check for completion signal ───────────────────────────────────────
-    if (action.tool === "done" || result?.done) {
-      logger.info("\n═══════════════════════════════════════════════════════");
+    if (action.tool === 'done' || result?.done) {
+      logger.info('\n═══════════════════════════════════════════════════════');
       logger.agentSuccess(`TASK COMPLETE after ${stepCount} steps`);
       logger.agentSuccess(
-        `Summary: ${result?.summary || action.args?.summary || "Done"}`,
+        `Summary: ${result?.summary || action.args?.summary || 'Done'}`,
       );
-      logger.info("═══════════════════════════════════════════════════════");
+      logger.info('═══════════════════════════════════════════════════════');
       break;
     }
   }

@@ -78,8 +78,9 @@ async function navigate_to_url(url) {
       waitUntil: 'domcontentloaded',
       timeout: BROWSER_TIMEOUT
     });
-    
-    await pageInstance.waitForTimeout(2000);
+
+    // Let JS settle briefly without a fixed 2 s freeze
+    await pageInstance.waitForLoadState('domcontentloaded').catch(() => {});
 
     const finalUrl = pageInstance.url();
     logger.agentSuccess(`Navigated to: ${finalUrl}`);
@@ -120,7 +121,7 @@ async function take_screenshot(label = 'step', selector = null) {
         await pageInstance.$eval(selector, node =>
           node.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'center' })
         );
-        await pageInstance.waitForTimeout(400);
+        await pageInstance.waitForTimeout(150); // minimal settle for instant scroll
       } catch (_) {
         // If centering fails, proceed with current scroll position
       }
@@ -142,7 +143,7 @@ async function click_on_screen(x, y) {
 
   try {
     await pageInstance.mouse.click(x, y);
-    await pageInstance.waitForTimeout(300); // Small debounce
+    await pageInstance.waitForTimeout(100); // minimal debounce
     logger.agentSuccess(`Clicked at (${x}, ${y})`);
   } catch (err) {
     logger.agentError(`Click at (${x}, ${y}) failed`, err);
@@ -159,7 +160,7 @@ async function click_element(selector) {
   try {
     await pageInstance.waitForSelector(selector, { timeout: 10000 });
     await pageInstance.click(selector);
-    await pageInstance.waitForTimeout(300);
+    await pageInstance.waitForTimeout(100); // minimal debounce
     logger.agentSuccess(`Clicked element: ${selector}`);
   } catch (err) {
     logger.agentError(`Failed to click element: ${selector}`, err);
@@ -172,14 +173,29 @@ async function send_keys(text, selector = null) {
 
   if (!pageInstance) throw new Error('Browser not open. Call open_browser() first.');
 
+  // Detect trailing \n — means the caller wants to submit/press Enter
+  const submitAfter = text.endsWith('\n');
+  const cleanText = submitAfter ? text.slice(0, -1) : text;
+
   try {
     if (selector) {
       await pageInstance.waitForSelector(selector, { timeout: 10000 });
-      await pageInstance.fill(selector, text);
+      // fill() sets the value without keyboard events; use type() for char-by-char
+      // or fill() + press('Enter') for instant fill then real Enter keypress
+      await pageInstance.fill(selector, cleanText);
+      if (submitAfter) {
+        await pageInstance.press(selector, 'Enter');
+        await pageInstance.waitForTimeout(100); // brief pause for SPA navigation
+      }
     } else {
-      await pageInstance.keyboard.type(text, { delay: 50 });
+      // No selector — type into whatever is focused
+      await pageInstance.keyboard.type(cleanText, { delay: 20 });
+      if (submitAfter) {
+        await pageInstance.keyboard.press('Enter');
+        await pageInstance.waitForTimeout(100);
+      }
     }
-    logger.agentSuccess(`Typed text into: ${selector || 'focused element'}`);
+    logger.agentSuccess(`Typed${submitAfter ? ' + Enter' : ''} into: ${selector || 'focused element'}`);
   } catch (err) {
     logger.agentError('send_keys failed', err);
     throw err;
@@ -198,16 +214,16 @@ async function scroll(deltaY = 400, selector = null) {
       const el = await pageInstance.$(selector);
       if (el) {
         await el.evaluate(node =>
-          node.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' })
+          node.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'center' })
         );
-        await pageInstance.waitForTimeout(600); // let smooth scroll settle
+        await pageInstance.waitForTimeout(150); // instant scroll — minimal settle
         logger.agentSuccess(`Scrolled element to center of viewport: ${selector}`);
       } else {
         throw new Error(`Selector not found: ${selector}`);
       }
     } else {
       await pageInstance.mouse.wheel(0, deltaY);
-      await pageInstance.waitForTimeout(500);
+      await pageInstance.waitForTimeout(200); // reduced from 500ms
       logger.agentSuccess(`Scrolled by ${deltaY}px`);
     }
   } catch (err) {
@@ -229,9 +245,9 @@ async function scroll_to_center(selector) {
   try {
     await pageInstance.waitForSelector(selector, { timeout: 10000 });
     await pageInstance.$eval(selector, node =>
-      node.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' })
+      node.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'center' })
     );
-    await pageInstance.waitForTimeout(600); // let scroll animation settle
+    await pageInstance.waitForTimeout(150); // instant scroll — minimal settle
     logger.agentSuccess(`Element centered in viewport: ${selector}`);
     return true;
   } catch (err) {
@@ -294,7 +310,12 @@ async function get_page_content() {
           visible: el.offsetParent !== null,
           inViewport,
           textContent: textContent || null,
-          ariaLabel: ariaLabel || null
+          ariaLabel: ariaLabel || null,
+          // role + data-testid give the AI better selectors on SPAs with no id/name
+          role: el.getAttribute('role') || null,
+          testId: el.getAttribute('data-testid') || el.getAttribute('data-test-id') || null,
+          // Include href for links so the AI can navigate_to_url() on any site
+          href: tag === 'a' ? (el.href || null) : null
         };
       }).filter(el => el !== null);
 
