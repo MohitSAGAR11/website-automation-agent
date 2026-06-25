@@ -1,62 +1,47 @@
 # Website Automation Agent — Ultimate Viva Preparation Document
 
 > **Audience**: You, the author of this project, preparing for a university viva.
-> **Scope**: Complete codebase analysis of the Website Automation Agent.
+> **Scope**: Complete codebase analysis of the Website Automation Agent (Full Stack version with React dashboard and Express API).
 > **Rule**: Every implementation claim traces to actual files and lines in the repository.
-> **Coverage**: Explicitly highlights implemented features and details features that are **not** implemented in this codebase (e.g., RAG, Vector Databases, Embeddings).
+> **Coverage**: Explicitly highlights implemented features (React Frontend, Express Server, Playwright ReAct loop, OpenRouter API wrappers) and details features that are **not** implemented in this codebase (e.g., RAG, Vector Databases, Embeddings).
 
 ---
 
 # SECTION 1 — Elevator Pitch
 
 ### 30-Second Pitch (Spoken Style)
-"My project is an autonomous **Website Automation Agent** built on Node.js using **Playwright** and **OpenRouter LLM**. Unlike static automation scripts, it uses the **ReAct (Reasoning + Acting) pattern**. At each step, it extracts the live DOM state as JSON, feeds it to the LLM, parses the LLM's JSON decision, and executes the action—like typing or clicking. I built it to automate complex web workflows like filling and submitting form documentation, taking step-by-step screenshots to create an audit trail."
+"My project is an autonomous **Website Automation Agent** built on a full-stack architecture using **React 19** for the frontend, **Express** for the backend queue, and **Playwright** with **OpenRouter LLMs** for agentic execution. Unlike static scripts, it uses the **ReAct (Reasoning + Acting) pattern**. At each step, it scrapes the live DOM state (including inputs, buttons, and links), filters for elements currently in the viewport, and prompts the LLM to output a JSON-wrapped action (like clicking, typing, or scrolling). I built a web dashboard to track these runs, stream real-time execution logs, and display step-by-step screenshots as a visual audit trail."
 
 ### 1-Minute Pitch (Spoken Style)
-"My project is an intelligent **Website Automation Agent** designed to automate form interaction on complex websites, specifically targeting the shadcn/ui React Hook Form documentation. It uses **Playwright** to spin up a Chromium browser and navigate the target page. 
-For decision-making, it uses a **ReAct loop** powered by **OpenRouter's AI API** (configured for `openai/gpt-oss-120b:free` or `claude-3.5-haiku`). At each step, the agent scrapes active input elements and labels, wraps them in a structured JSON payload, and asks the LLM what to do next. The LLM responds in JSON specifying the tool and arguments (e.g., `send_keys` or `click_element`), which the agent parses and dispatches. Winston handles logs, and Playwright captures sequential screenshots to document successful submission."
+"My project is an intelligent **Full-Stack Website Automation Agent** designed to automate form interaction on complex websites. 
+It features a **Vite + React 19 dashboard** where users submit automation tasks (like searching YouTube or filling dynamic documentation forms). The request goes to an **Express API server (`src/server.js`)** which queues runs and performs an initial LLM step to rewrite tasks into structured plans. 
+The orchestrator (`src/agent/agent.js`) runs a **ReAct loop** using a single-session browser managed via Playwright. At each step, it analyzes only the interactive elements currently in the viewport, uses an OpenRouter gateway client (`src/agent/GroqClient.js`) to generate actions, handles rate limits dynamically by parsing retry headers from 429 errors, and updates the dashboard with real-time logs and screenshots."
 
 ### 2-Minute Pitch (Spoken Style)
-"My project is an autonomous browser agent that replaces hard-coded automation scripts with dynamic AI decision-making. 
-The core architecture is built around a single-session browser instance managed via a module singleton in `src/tools/browserTools.js`. The entry point `src/index.js` bootstraps the agent with a natural language task description. The orchestrator in `src/agent/agent.js` runs a feedback loop up to 20 steps. 
-In each step, the agent reads the page state through `get_page_content()`, extracting all visible inputs, labels, and text. This context is appended to the conversation history and sent to OpenRouter via `src/agent/openRouterClient.js` with a low temperature of 0.1 for deterministic action generation. 
-Once the LLM outputs a JSON action, it is dispatched to Playwright wrapper tools to click, type, or scroll. If an action fails, the system captures the error message, feeds it back to the LLM as user context, and self-heals by trying alternative selectors. Sequential screenshots are stored in `/screenshots` as visual evidence of the agent's work. This provides high business value by drastically reducing maintenance costs of automated testing suites."
+"My project is an autonomous full-stack browser agent that replaces brittle, hard-coded QA and RPA scripts with dynamic AI decision-making.
+The user interacts with a **React 19 single-page app** connected to a **Node.js/Express server** running on port 3001. When a task is queued, the server rewrites the natural language task into a clean step-by-step plan using the LLM. 
+The core runner in `src/agent/agent.js` opens Playwright, navigates to the target page, and enters a loop. In each step, it calls `get_page_content()` to extract visible inputs, buttons, and `<a>` links. To protect the LLM context window and stay within free-tier limits, it filters out elements outside the viewport, serializes elements compactly, and trims conversation history to the last 10 messages while keeping the first instruction message permanently pinned. 
+The gateway client `src/agent/GroqClient.js` calls OpenRouter (defaulting to Llama-3.3-70b-instruct) at temperature 0.1. If a 429 rate limit is hit, our code automatically parses the sleep time (e.g., 'try again in 7.03s') and retries. Every action is saved as a screenshot under `screenshots/run_id/` and served back to the React UI, showing a complete step-by-step visual audit trail of the automation."
 
 ### 5-Minute Pitch (Spoken Style)
-"This project is a state-of-the-art **Website Automation Agent** implementing the ReAct (Reasoning + Acting) pattern. 
-The problem it solves is that traditional browser automation (like Selenium or vanilla Puppeteer) relies on hard-coded selectors that break the moment a UI layout changes. My solution introduces a dynamic feedback loop between a web browser and a Large Language Model.
-Here is how it works:
-1. **Entry Point**: `src/index.js` defines the task (e.g., filling out a shadcn/ui React Hook Form) and triggers `runAgent()` in `src/agent/agent.js`.
-2. **Observation**: The agent launches Chromium using Playwright. It runs a custom JavaScript evaluator inside the browser context (`get_page_content`) to query and map all interactive form fields (buttons, inputs, textareas) and their text labels.
-3. **Reasoning**: It compiles this JSON DOM state, the task description, and the chronological conversation history into a structured prompt. This is sent to an LLM via OpenRouter. We use a system prompt that dictates a strict JSON response schema: `{ tool, args, reasoning }`.
-4. **Execution**: The response is parsed using regex and string matching to extract the JSON. The agent dispatches the tool using `dispatchTool()`, calling Playwright wrappers like `click_element()` or `send_keys()`.
-5. **Self-Correction & Logging**: If an element isn't clickable, Playwright throws. The agent catches the exception, captures an error screenshot, and sends the raw error back to the LLM. The AI then uses this feedback to revise its approach—for instance, trying a different selector or scrolling the element to the center of the viewport first.
-6. **Persistence**: Every action is saved as a sequentially numbered screenshot (`001_initial.png`, `002_username_filled.png`, etc.) under `./screenshots` and logged colorfully to the console and in JSON format to `logs/agent.log` using Winston.
-By combining modular browser tools, local logging, LLM reasoning, and robust error recovery, the agent successfully navigates pages, fills dynamic forms, and logs successful completion without manual code changes when selectors shift."
-
-### 10-Minute Pitch (Spoken Style)
-"My project is an autonomous **Website Automation Agent** that applies Generative AI to browser control. The architecture consists of three core layers: **The Entry Point**, **The AI Brain**, and **The Browser Hands**.
-
-1. **The Entry Point (`src/index.js`)**: It initiates the application. It loads environment configuration via `dotenv` and contains the natural-language task definition. It commands the agent to navigate to the shadcn/ui React Hook Form documentation page, locate the form containing 'Username', 'Bug Title', and 'Description', fill these fields with sample data, click Submit, confirm submission, and save sequential screenshots.
-
-2. **The AI Brain (`src/agent/agent.js` & `src/agent/openRouterClient.js`)**: The brain orchestrates the ReAct loop. In `agent.js`, `runAgent()` checks for the `OPENROUTER_API_KEY`. (Note: If the key is missing, the code throws an error; there is no active fallback script implemented in this version of the code, despite references in the documentation). The loop runs for a maximum of 20 steps. Each step begins by fetching the DOM state as a simplified JSON object mapping labels to elements. We send this state alongside the task instructions and conversation history to the OpenRouter API.
-Our API client in `openRouterClient.js` targets the specified model (defaulting to `openai/gpt-oss-120b:free` or `anthropic/claude-3.5-haiku`) with a temperature of 0.1 to avoid creative variations and enforce structured JSON output. We implement a multi-stage parser that extracts JSON even if the LLM wraps it in markdown code fences or prints conversational preamble.
-
-3. **The Browser Hands (`src/tools/browserTools.js`)**: Playwright controls Chromium. We wrap raw Playwright calls into modular, standalone functions that return state and log actions:
-   - `open_browser()`: Launches the browser. It checks for system Chrome or a cached Playwright browser first. It sets custom viewports and user agents to match standard desktop browsers.
-   - `navigate_to_url(url)`: Loads the target page, waiting for the `domcontentloaded` event.
-   - `take_screenshot(label, selector)`: Saves a numbered PNG. If a selector is provided, it centers the element in the viewport first using `scrollIntoView` to avoid cropping.
-   - `send_keys(text, selector)`: Types text, falling back to a direct keyboard typist with a 50ms delay per key to simulate natural human keystrokes.
-   - `get_page_content()`: Evaluates a script in the browser context to query active interactive elements, returning a clean DOM representation to prevent token bloat.
-
-By maintaining a shared conversation history, the LLM retains context of past actions, preventing infinite loops. If Playwright throws an error (e.g. element overlap), the error message is added as a 'user' message, enabling the agent to adjust its selectors on the fly. The final state is snapshotted, the browser is closed cleanly, and Winston records the JSON audit trail to `/logs`."
+"This project is a state-of-the-art **Full-Stack Website Automation Agent** implementing the ReAct (Reasoning + Acting) pattern. 
+Traditional automation tools (Selenium, Cypress) break the moment class names or DOM structures change. Our agent resolves this by semantic reasoning.
+Here is how the end-to-end stack works:
+1. **Frontend Dashboard**: A React 19 app where you enter a target URL and a task. It fetches past runs and monitors active runs.
+2. **Express Backend API (`src/server.js`)**: Receives requests, creates a unique `runId`, pushes it to an execution queue, and rewrites the task into a numbered list via the LLM.
+3. **Observation Layer (`src/tools/browserTools.js`)**: Playwright launches Chromium. In `get_page_content()`, we run a custom browser-side script that maps all active inputs, select elements, textareas, buttons, and `<a>` links. We compute their bounding client rects to flag if they are currently inside the viewport (`inViewport`).
+4. **Reasoning Layer (`src/agent/agent.js`)**: The agent filters page elements to only those in the viewport, maps them to compressed key-value objects, and structures a prompt. This prompt, along with a trimmed history, is sent to OpenRouter via the gateway wrapper `src/agent/GroqClient.js`. We use a system prompt that enforces a JSON response: `{ tool, args, reasoning }`.
+5. **Execution Layer**: The agent parses the JSON response and dispatches the tool (e.g. `click_element`, `send_keys`, `scroll`). If an execution throws an error (e.g. element hidden), we save an error screenshot and feed the raw error back to the LLM to self-heal.
+6. **Dynamic Rate Limit Handling**: If the OpenRouter free tier returns a 429 rate limit error, our client parses the retry delay from the API response text and automatically pauses the execution thread for that duration.
+7. **Real-Time Logs & Assets**: Winston writes logs to run-specific files, which are exposed via Express API endpoints and rendered on the React dashboard alongside chronological screenshots.
+This architecture provides high business value by eliminating brittle test suites, providing visual proof of form submissions, and scaling automatically via background queueing."
 
 ---
 
 # SECTION 2 — Project Story
 
 ### What problem does this solve?
-Traditional browser testing frameworks (Selenium, Cypress, Puppeteer) require QA engineers to write brittle scripts with hardcoded CSS selectors or XPath expressions. When frontend developers update styles, shift class names, or modify layouts, these tests break immediately, creating a high maintenance burden. 
+Traditional browser testing frameworks require QA engineers to write brittle scripts with hardcoded CSS selectors or XPath expressions. When frontend developers update styles, shift class names, or modify layouts, these tests break immediately, creating a high maintenance burden. 
 Our Website Automation Agent solves this by making browser interaction **semantic**. Instead of telling the browser *'Click the button with class `.btn-primary.submit-form`'*, we tell the agent *'Find the Submit button and click it'*. The AI reads the page structure and resolves the correct selector at runtime.
 
 ### Why did we choose this project?
@@ -71,17 +56,12 @@ We chose this project to explore the **ReAct (Reasoning + Acting) pattern** appl
 It provides **dynamic adaptability**. If the target page is modified (e.g., changing input field order, wrapping fields in a dialog, or renaming classes), a traditional script fails. The AI agent simply reads the new DOM layout, updates its query parameters, and completes the form.
 
 ### How is it different from existing solutions?
-Unlike basic scraper scripts, it maintains a **state-action feedback loop**. It checks the page layout at *every single step* and maintains a chronological history. Most scrapers are run-and-forget; this agent constantly observes if its last action succeeded before planning the next.
+Unlike basic scraper scripts, it maintains a **state-action feedback loop** and exposes a full web-based control center. It checks the page layout at *every single step* and maintains a chronological history. Most scrapers are run-and-forget; this agent constantly observes if its last action succeeded before planning the next.
 
 ### Business Value
 - **Reduces QA script maintenance costs** by up to 80% through self-healing selectors.
 - **Speeds up robotic process automation** implementation times.
 - **Improves audit trails** by capturing automated, annotated visual proof (screenshots) of form compliance.
-
-### Real-World Applications
-- Automated software testing of dynamic single-page applications (React, Vue, Svelte).
-- Automatic customer registration or form filing across municipal/state portals.
-- Headless checkouts for monitoring e-commerce stock.
 
 ---
 
@@ -89,26 +69,33 @@ Unlike basic scraper scripts, it maintains a **state-action feedback loop**. It 
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    index.js (Entry Point)                   │
-│  - Loads env path configs                                   │
-│  - Defines TASK string                                      │
-│  - Initiates runAgent()                                      │
+│                 React 19 Frontend Dashboard                 │
+│  - Form submission (Task, Target URL)                      │
+│  - Real-time Winston log streaming                          │
+│  - Step-by-step screenshots visualizer                      │
 └──────────────┬──────────────────────────────────────────────┘
                │
-               ▼
+               ▼ HTTP Requests (3001)
 ┌─────────────────────────────────────────────────────────────┐
-│                   agent.js (ReAct Orchestrator)              │
-│  - Executes 20-step loop                                    │
-│  - Manages conversationHistory                              │
-│  - Invokes dispatchTool()                                   │
+│                Express Backend (src/server.js)              │
+│  - Queue processor, runs task-rewriter LLM phase            │
+│  - Exposes endpoints: /run, /runs, /run/:id/logs, etc.       │
 └──────────────┬──────────────────────────────────────────────┘
+               │
+               ▼ spawns
+┌─────────────────────────────────────────────────────────────┐
+│                agent.js (ReAct Orchestrator)                │
+│  - Executes 20-step loop, manages memory history            │
+│  - Pins first user message, filters inputs in viewport      │
+└──────────────┬──────────────────────────────────────────────┘
+               │
                ├───────────────────────────────┐
                ▼                               ▼
 ┌──────────────────────────────┐ ┌────────────────────────────┐
-│      openRouterClient.js     │ │       browserTools.js      │
-│  - chat() (temperature: 0.1) │ │  - open_browser() (Playwt) │
-│  - parseActionFromResponse() │ │  - get_page_content()      │
-│  - POST completions to API   │ │  - take_screenshot()       │
+│      GroqClient.js (API)     │ │       browserTools.js      │
+│  - Chat completions          │ │  - open_browser() (Playwt) │
+│  - Parses wait times on 429s │ │  - get_page_content()      │
+│  - Models: llama-3.3-70b-free│ │  - check viewport / links  │
 └──────────────────────────────┘ └─────────────┬──────────────┘
                                                │
                                                ▼
@@ -122,12 +109,12 @@ Unlike basic scraper scripts, it maintains a **state-action feedback loop**. It 
 - **Frontend / Browser Client**: Playwright controls Chromium.
 - **Backend Service**: Node.js runtime process.
 - **API**: OpenRouter Chat Completions HTTP POST API (`https://openrouter.ai/api/v1/chat/completions`).
-- **Prompt Construction**: Merges `SYSTEM_PROMPT` + `task` + `pageState` + `conversationHistory`.
+- **Prompt Template**: Merges `SYSTEM_PROMPT` + `task` + `pageState` + `conversationHistory`.
 - **Embedding Model**: **Not Implemented.** This project does not use vectors or embeddings.
 - **Vector Database**: **Not Implemented.** This project does not use any vector storage.
 - **Retriever**: **Not Implemented.**
 - **Reranker**: **Not Implemented.**
-- **LLM**: Configured via `.env` as `openai/gpt-oss-120b:free` or similar.
+- **LLM**: Configured via `.env` as `meta-llama/llama-3.3-70b-instruct:free` or similar.
 - **Response**: Parsed internally by regex and dispatched.
 
 ---
@@ -135,534 +122,172 @@ Unlike basic scraper scripts, it maintains a **state-action feedback loop**. It 
 # SECTION 4 — End-to-End Flow
 
 ### Keystroke / Query Automation Flow
-1. **Setup**: The program is started via `npm start`.
-2. **Launch**: `runAgent()` invokes `open_browser()` (`src/tools/browserTools.js#L28`) to spin up Playwright Chromium and `navigate_to_url()` (`src/tools/browserTools.js#L70`).
-3. **Analyze**: The orchestrator triggers `get_page_content()` (`src/tools/browserTools.js#L256`). A script evaluates interactive DOM elements and returns them as a JSON list.
-4. **Reason**: The orchestrator appends this page snapshot to `conversationHistory` and calls `chat()` (`src/agent/openRouterClient.js#L19`).
-5. **Decide**: The LLM analyzes the layout and returns a JSON action block outlining the next action (e.g. `send_keys`).
-6. **Act**: The orchestrator dispatches the action to `send_keys` (`src/tools/browserTools.js#L162`).
-7. **Verify**: The agent takes a screenshot and loops back to **Analyze** to check the visual outcome.
-8. **Exit**: Once the LLM determines all fields are filled, it invokes the `done` tool, breaking the loop.
+1. **Submit**: User triggers a task on the React 19 Frontend Dashboard.
+2. **Queue**: The Express API receives the post request (`/run`), assigns a run ID, and places it in an in-memory queue.
+3. **Rewrite**: When dequeued, the backend calls `rewriteTask()` to convert the raw user prompt into a structured step-by-step browser plan.
+4. **Launch**: `runAgent()` invokes `open_browser()` (`src/tools/browserTools.js#L28`) to spin up Playwright Chromium and navigate to the target page.
+5. **Analyze**: The orchestrator triggers `get_page_content()` (`src/tools/browserTools.js#L264`). It evaluates interactive nodes (`input, textarea, select, button, a`) and determines their viewport layout (`inViewport`).
+6. **Reason**: The orchestrator filters out elements not in the viewport, maps them to compact, token-lean JSON attributes, and constructs the user message. It appends the message to the conversation history, keeping the first message containing the task always pinned.
+7. **Decide**: The orchestrator requests the next action from the LLM via `chat()` (`src/agent/GroqClient.js#L24`). 
+8. **Rate Limit Handling**: If the API returns a 429, the client parses the retry time (e.g. 7.03s), sleeps, and continues.
+9. **Act**: The orchestrator parses the JSON response and dispatches the action to `send_keys` or `click_element` (`src/tools/browserTools.js`).
+10. **Verify**: The agent takes a screenshot, logs details, and loops back to **Analyze** to check the visual outcome. The React dashboard streams the updated log file and screenshot list.
+11. **Exit**: Once the LLM determines all fields are filled, it invokes the `done` tool, closes the browser context, and completes the run.
 
 ---
 
 # SECTION 5 — Explain Every File
 
-## 1. `src/index.js`
-- **File Path**: `src/index.js`
-- **Purpose**: Program entry point.
-- **Responsibilities**: 
-  - Loads configuration variables using `dotenv`.
-  - Defines the natural-language task as `TASK` (lines 7-21).
-  - Triggers the orchestrator function `runAgent()` inside a self-invoking async function (lines 24-36).
-  - Handles process exit codes (0 for success, 1 on failure).
-- **Why it exists**: Isolates task definition and orchestration start from core agent logic.
-- **Functions**: Self-invoking anonymous async function `()()`.
-- **Dependencies**: `dotenv` (npm), `path` (node core), `src/agent/agent.js`, `src/utils/logger.js`.
-- **Called by**: Node execution (`node src/index.js` or `npm start`).
-- **Calls**: `runAgent()`, `logger.error()`.
-- **Contribution**: Bootstraps the application.
-
-## 2. `src/agent/agent.js`
-- **File Path**: `src/agent/agent.js`
-- **Purpose**: Core ReAct Orchestration and Tool Routing.
+## 1. `frontend/src/App.jsx`
+- **Purpose**: Frontend web app.
 - **Responsibilities**:
-  - Implements the system prompt configuration (`SYSTEM_PROMPT` lines 15-47).
-  - Maps tool choices to Playwright operations via `dispatchTool()` (lines 49-91).
-  - Drives the `runAgent()` feedback loop, updating the memory structure `conversationHistory` at each step (lines 93-215).
-  - Handles runtime errors by feeding exceptions back into the LLM context.
-- **Why it exists**: Serves as the central state-management engine of the agent.
-- **Functions**: `dispatchTool()`, `runAgent()`.
-- **Dependencies**: `src/tools/browserTools.js`, `src/agent/openRouterClient.js`, `src/utils/logger.js`, `dotenv`.
-- **Called by**: `src/index.js`.
-- **Calls**: `open_browser()`, `navigate_to_url()`, `get_page_content()`, `chat()`, `parseActionFromResponse()`, `dispatchTool()`, `take_screenshot()`, `close_browser()`.
-- **Contribution**: Coordinates the agent loop.
+  - Exposes forms for entering task descriptions and target URLs.
+  - Submits runs to the Express API backend.
+  - Features real-time log polling (`/run/:id/logs`) and displays chronological screenshots.
+  - Renders execution state (Pending, Rewriting, Running, Success, Failed).
+- **Dependencies**: React 19, standard hooks (`useState`, `useEffect`, `useRef`), axios/fetch.
 
-## 3. `src/agent/openRouterClient.js`
-- **File Path**: `src/agent/openRouterClient.js`
-- **Purpose**: OpenRouter Gateway API Integration.
+## 2. `src/server.js`
+- **Purpose**: Backend API Server and Task Queue Manager.
+- **Responsibilities**:
+  - Serves static screenshots.
+  - Manages task execution queues to prevent multiple browsers from launching concurrently.
+  - Runs the task rewriting phase `rewriteTask(task)` before starting the automation run.
+  - Exposes REST endpoints (`/run`, `/run/:id/status`, `/run/:id/logs`, `/run/:id/screenshots`, `/runs`).
+- **Dependencies**: `express`, `cors`, `path`, `fs`, `winston`, `dotenv`, `src/agent/agent.js`, `src/agent/GroqClient.js`.
+
+## 3. `src/index.js`
+- **Purpose**: Local CLI entry point fallback.
+- **Responsibilities**:
+  - Bootstraps agent execution directly via console commands.
+  - Loads environment configuration variables using `dotenv`.
+  - Defines the fallback `TASK` string.
+- **Dependencies**: `dotenv`, `src/agent/agent.js`.
+
+## 4. `src/agent/agent.js`
+- **Purpose**: Core ReAct Orchestration, Element Filtering, and Memory Management.
+- **Responsibilities**:
+  - Implements the system prompt configuration (`SYSTEM_PROMPT`).
+  - Maps tool choices to Playwright operations via `dispatchTool()`.
+  - Performs elements viewport filtering (`pageState.inputs?.filter(i => i.visible && i.inViewport)`).
+  - Serializes elements compactly by stripping out empty/null parameters to save context tokens.
+  - Trims conversation history (last 10 messages) while pinning the first message containing the task description.
+  - Drives the 20-step loop and handles self-healing upon tool crashes.
+- **Dependencies**: `src/tools/browserTools.js`, `src/agent/GroqClient.js`, `src/utils/logger.js`, `dotenv`.
+
+## 5. `src/agent/GroqClient.js`
+- **Purpose**: OpenRouter Gateway API Integration (named GroqClient for project compatibility).
 - **Responsibilities**:
   - Connects to `https://openrouter.ai/api/v1/chat/completions` using Axios.
-  - Controls parameters: Temperature (0.1), Max Tokens (1024), headers (`HTTP-Referer`, `X-Title`).
-  - Implements `parseActionFromResponse()` to extract JSON out of raw text (lines 73-93).
-- **Why it exists**: Decouples network communication details from agent prompt formatting.
-- **Functions**: `chat()`, `parseActionFromResponse()`.
-- **Dependencies**: `axios` (npm), `src/utils/logger.js`, `dotenv`.
-- **Called by**: `src/agent/agent.js`.
-- **Calls**: `axios.post()`, `logger.debug()`, `logger.agentError()`.
-- **Contribution**: Handles AI communication and response parsing.
+  - Controls parameters: Temperature (0.1), Max Tokens (512).
+  - Implements dynamic wait/retry on 429 status codes by matching regex delays (`try again in (\d+\.?\d*)s`).
+  - Parses JSON output using regex code fence matching and raw brace scopes extraction.
+- **Dependencies**: `axios`, `src/utils/logger.js`, `dotenv`.
 
-## 4. `src/tools/browserTools.js`
-- **File Path**: `src/tools/browserTools.js`
+## 6. `src/tools/browserTools.js`
 - **Purpose**: Browser Action Wrapper Layer.
 - **Responsibilities**:
   - Implements Playwright browser setup, configuration, and teardown.
   - Manages browser state via singletons (`browserInstance`, `pageInstance`, `screenshotCounter`).
   - Exposes 11 atomic browser tools to click, type, scroll, wait, and extract page contents.
-- **Why it exists**: Abstracting Playwright calls makes the agent logic clean and reusable.
-- **Functions**: `open_browser()`, `navigate_to_url()`, `take_screenshot()`, `click_on_screen()`, `click_element()`, `send_keys()`, `scroll()`, `scroll_to_center()`, `double_click()`, `get_page_content()`, `wait_for_element()`, `close_browser()`, `getPage()`.
-- **Dependencies**: `playwright` (npm), `path` (node), `fs` (node), `src/utils/logger.js`, `dotenv`.
-- **Called by**: `src/agent/agent.js`.
-- **Calls**: Playwright browser/page methods.
-- **Contribution**: Handles low-level browser automation.
+  - Extracts `input, textarea, select, button, a` tags and checks if they are currently inside the viewport coordinates (`inViewport`).
+- **Dependencies**: `playwright`, `path`, `fs`, `src/utils/logger.js`, `dotenv`.
 
-## 5. `src/utils/logger.js`
-- **File Path**: `src/utils/logger.js`
+## 7. `src/utils/logger.js`
 - **Purpose**: Dual console and file logger.
 - **Responsibilities**:
-  - Uses Winston to write structured logs to `logs/agent.log` and errors to `logs/errors.log`.
-  - Uses Chalk to color-code console logs.
-  - Exposes custom logging shortcuts (`agentAction`, `agentThink`, `agentSuccess`, `agentError`).
-- **Why it exists**: Centralizes trace logging to aid in visual debugging and offline analysis.
-- **Functions**: `logger.agentAction()`, `logger.agentThink()`, `logger.agentSuccess()`, `logger.agentError()`.
-- **Dependencies**: `winston` (npm), `chalk` (npm), `path`, `fs`, `dotenv`.
-- **Called by**: `src/index.js`, `src/agent/agent.js`, `src/agent/openRouterClient.js`, `src/tools/browserTools.js`.
-- **Calls**: Winston logging functions.
-- **Contribution**: Standardizes application logging.
+  - Uses Winston to write logs to local run-specific files and general `logs/agent.log`.
+  - Colors console outputs with Chalk.
+- **Dependencies**: `winston`, `chalk`, `path`, `fs`.
 
 ---
 
 # SECTION 6 — Explain Every Important Function
 
-## 1. `runAgent({ task, targetUrl })` (`src/agent/agent.js#L93`)
+## 1. `get_page_content()` (`src/tools/browserTools.js#L264`)
+- **Purpose**: Extracts a structural snapshot of form fields, buttons, and links.
+- **Logic**: Evaluates a script in the browser context via `pageInstance.evaluate()`. It queries `input, textarea, select, button, a` elements. For link elements (`a`), it ignores them if they have no text content, title, or aria-label. For all elements, it computes bounding client coordinates relative to `window.innerHeight` and `window.innerWidth` to determine if they are currently within the viewport bounds (`inViewport`).
+- **Why written this way**: Adding link extraction (`a` tags) allows the agent to interact with video links (like on YouTube) and navigate dynamic web sites. The `inViewport` calculation is critical to filter out-of-screen nodes and save tokens.
+
+## 2. `runAgent({ task, targetUrl })` (`src/agent/agent.js#L90`)
 - **Purpose**: Drives the ReAct agent loop step-by-step up to `MAX_STEPS`.
-- **Inputs**: `{ task: string, targetUrl: string }`.
-- **Outputs**: `Promise<void>`.
-- **Logic**: Launches browser and loads URL. Inside a `while (stepCount < MAX_STEPS)` loop, it queries the DOM using `get_page_content()`, constructs the prompt, requests the next action from the LLM, executes the tool via `dispatchTool()`, checks if `action.tool === "done"`, and loops. Upon completion or error, it saves a final screenshot, closes the browser, and logs status.
-- **Why written this way**: The loop enables iterative reasoning. Storing history in `conversationHistory` gives the LLM context of past actions, preventing repeated mistakes.
-- **Alternative implementation**: A recursive function `step(history)` could be used, but a `while` loop is simpler and avoids call-stack overflow concerns.
-- **Complexity**: Time Complexity is dominated by network round-trips to the LLM (typically 1–3s per step) and DOM execution. Space Complexity is $O(M)$ where $M$ is the size of the token history.
-- **Edge cases**: If OpenRouter fails, the loop catches the error and retries the step. If `MAX_STEPS` is reached, it exits gracefully with a warning instead of looping infinitely.
-- **Possible bugs**: If `pageState` fails to load, it falls back to an empty object, which may lead the LLM to hallucinate selector targets.
+- **Logic**: Launches browser and loads URL. Inside a loop, it fetches page state via `get_page_content()`. It filters the elements list to those `inViewport` (falling back to all visible elements if none are in view). It maps these elements to a stripped representation (`tag`, `id`, `name`, `placeholder`, `text`, `aria`) with no null properties. It constructs the prompt. If the step is greater than 1, it formats the prompt compactly as a single line and skips the full task description. It prunes conversation history while preserving the first message. It calls the LLM, parses the action, executes it, captures a screenshot, and repeats.
+- **Why written this way**: The viewport filtering and compact serialization prevent token bloat, ensuring the prompt fits comfortably within free-tier constraints. Keeping the first message pinned ensures the agent never forgets the goal during long multi-step executions.
 
-## 2. `dispatchTool(toolName, args)` (`src/agent/agent.js#L49`)
-- **Purpose**: Routes tool calls requested by the LLM to the matching Playwright automation wrapper.
-- **Inputs**: `toolName: string`, `args: object`.
-- **Outputs**: `Promise<any>`.
-- **Logic**: A `switch` block maps strings (e.g. `'navigate_to_url'`, `'click_element'`) to functions in `browserTools.js`, unpacking parameters.
-- **Why written this way**: Keeps the ReAct loop decoupled from browser details.
-- **Alternative implementation**: Dynamic function dispatching (`tools[toolName](...args)`), but an explicit switch-case is safer, self-documenting, and prevents execution of arbitrary functions.
-- **Complexity**: $O(1)$ dispatch.
-- **Edge cases**: Unknown tool name throws an explicit error: `"Unknown tool: [name]"`.
-- **Possible bugs**: Missing arguments in `args` can cause type errors if wrappers don't provide defaults.
-
-## 3. `chat(messages, systemPrompt)` (`src/agent/openRouterClient.js#L19`)
-- **Purpose**: Sends messages to the OpenRouter completion endpoint.
-- **Inputs**: `messages: array`, `systemPrompt: string`.
-- **Outputs**: `Promise<string>`.
-- **Logic**: Combines the system prompt and history into a payload, sets temperature to 0.1, and executes an `axios.post` to OpenRouter.
-- **Why written this way**: Temperature is set to 0.1 to keep LLM actions highly deterministic.
-- **Alternative implementation**: Using the official `openai` NPM package configured with a custom base URL.
-- **Complexity**: Time: $O(\text{API response latency})$. Space: $O(\text{Payload size})$.
-- **Edge cases**: If the API key is not configured, it throws a localized error.
-- **Possible bugs**: Network timeouts are set to 60s; poor internet connections can drop requests.
-
-## 4. `parseActionFromResponse(text)` (`src/agent/openRouterClient.js#L73`)
-- **Purpose**: Extracts structured JSON actions from the LLM's text output.
-- **Inputs**: `text: string`.
-- **Outputs**: `object|null` (parsed JSON or null).
-- **Logic**: Uses a regular expression to search for code fences (` ```json ` or ` ``` `). If found, it parses the content. If not, it falls back to scanning for the first brace pair `{ ... }` using regex.
-- **Why written this way**: LLMs sometimes output conversational text around JSON. This regex extraction increases parsing resilience.
-- **Alternative implementation**: Direct `JSON.parse(text)`, but this fails if the LLM adds any conversational preamble.
-- **Complexity**: $O(K)$ where $K$ is the text length.
-- **Edge cases**: If no braces or code fences exist, it returns `null`.
-- **Possible bugs**: If the LLM generates invalid JSON (e.g., trailing commas or unescaped quotes), `JSON.parse` will throw and return null.
-
-## 5. `get_page_content()` (`src/tools/browserTools.js#L256`)
-- **Purpose**: Extracts a structural snapshot of form fields and text labels.
-- **Inputs**: None.
-- **Outputs**: `Promise<object>` containing `title`, `url`, `bodyText`, `inputs` array, and `labels` array.
-- **Logic**: Evaluates a JavaScript function in the browser context via `pageInstance.evaluate()`. It queries all `input, textarea, select, button` elements, mapping their attributes, layout visibility, and associations with `label` tags.
-- **Why written this way**: Rather than sending a massive raw HTML dump to the LLM (which wastes tokens and exceeds context limits), this returns a clean JSON summary of interactive elements.
-- **Alternative implementation**: Sending raw HTML or converting the DOM to Markdown.
-- **Complexity**: Time: $O(N)$ where $N$ is the number of elements in the DOM. Space: $O(N)$ for the returned JSON string.
-- **Edge cases**: Elements inside Shadow DOMs or iframes are not captured by `document.querySelectorAll()`.
-- **Possible bugs**: Elements hidden via absolute offsets or opacity might be reported as visible if `offsetParent` is not null.
+## 3. `chat(messages, systemPrompt)` (`src/agent/GroqClient.js#L24`)
+- **Purpose**: Sends requests to OpenRouter and handles API errors.
+- **Logic**: Sends message logs via HTTP POST. If it catches a 429 rate limit error:
+  - It searches the error message string for `"try again in [seconds]s"` using a regex.
+  - If a wait time is found, it calculates the delay in milliseconds (adding a 1-second safety buffer) and sleeps.
+  - If no explicit time is parsed, it falls back to an exponential backoff sequence (`[8000, 20000, 40000]ms`).
+  - It retries up to 4 times before failing.
+- **Why written this way**: Free LLM APIs are highly unstable and prone to transient rate limits. Parsing the actual required delay avoids long hardcoded sleep times while preventing immediate, consecutive rate-limit violations.
 
 ---
 
 # SECTION 7 — AI Concepts Used
 
-- **Generative AI**: Systems generating content dynamically. Implemented to construct text-based browser instructions.
-- **LLMs**: Neural models trained to produce text. Routed via OpenRouter.
-- **Transformers & Attention**: Context processing architecture (underlying LLM function).
-- **Tokenization**: Input encoding (handled by the LLM).
-- **Context Window**: Max input token bounds. Constrained by trimming extracted DOM elements.
-- **Prompt Engineering**: Instructing LLMs. Implemented via `SYSTEM_PROMPT`.
-- **Temperature**: Locked to `0.1` in `openRouterClient.js#L33` to force deterministic JSON responses.
-- **Top-k / Top-p**: Selection bounds (handled by the LLM backend).
-- **Hallucination**: LLM generating invalid inputs. Mitigated by feeding live DOM variables.
-- **Inference**: Executing the model on active prompts.
-- **Fine-Tuning**: **Not Implemented.** We use zero-shot instructions instead.
-- **Instruction Tuning**: Target alignment training (LLM backend feature).
-- **Zero-Shot / One-Shot / Few-Shot**: Zero-shot prompt styling used.
-- **Chain of Thought**: Requiring thinking explanations. Implemented via the `"reasoning"` JSON field.
-- **Retrieval Augmented Gen (RAG)**: **Not Implemented.**
-- **Vector Database**: **Not Implemented.**
-- **Chunking & Chunk Overlap**: **Not Implemented.**
-- **Semantic Search**: **Not Implemented.**
-- **Cosine Similarity**: **Not Implemented.**
-- **Hybrid Search**: **Not Implemented.**
-- **Re-ranking & Cross Encoder**: **Not Implemented.**
-- **Dense & Sparse Retrieval**: **Not Implemented.**
-- **Metadata Filtering**: **Not Implemented.**
-- **Query Expansion / Rewriting**: **Not Implemented.**
-- **HyDE (Hypothetical Embeddings)**: **Not Implemented.**
-- **Corrective / Agentic RAG**: **Not Implemented.**
-- **Context Compression**: HTML elements compressed to basic JSON inputs in `browserTools.js#L256`.
-- **Prompt Templates**: Templates populated with page states in `agent.js#L133`.
-- **Caching**: **Not Implemented.** Every loop step invokes the LLM.
-- **Streaming Responses**: **Not Implemented.** We block until HTTP responses complete.
-- **Guardrails**: **Not Implemented.** Rely on model base alignment.
-- **Evaluation**: **Not Implemented.** Offline verification is manual.
-- **Latency & Token Cost**: Logged directly to `logs/agent.log`.
+- **ReAct (Reasoning + Acting)**: Loop combining thought cycles with tool execution.
+- **Zero-Shot Prompting**: The agent receives task instructions directly without task-specific examples.
+- **Chain of Thought**: Requiring the LLM to output a `"reasoning"` parameter to improve action accuracy.
+- **Context Compression**: 
+  - Restricting extracted nodes to the active **viewport** (`inViewport`).
+  - Stripping out empty keys in the JSON representation of elements.
+  - Using a single-line message structure for subsequent steps (`Step N | URL | Title | ...`).
+  - Pinned History: Trimming history to the last 10 messages but keeping the first message pinned to preserve instructions.
+- **Vector Databases / Embeddings / RAG**: **Not Implemented.** Frame this as an architectural choice—because the agent interacts with live web interfaces dynamically, index search or document embedding is unnecessary.
 
 ---
 
 # SECTION 8 — Why Questions
 
-### Group 1 — Browser Automation Choices
-1. **Why use Playwright instead of Selenium?**
-   Playwright has faster execution speeds and built-in waits.
-2. **Why use Chromium instead of Firefox?**
-   Chromium has high rendering consistency and is the default target for enterprise apps.
-3. **Why launch in Headless mode by default?**
-   To run automation efficiently in terminal-only CI environments.
-4. **Why include `--no-sandbox` argument in launch options?**
-   Allows the browser to launch successfully in Linux container configurations.
-5. **Why set standard viewports to 1280x800?**
-   Simulates regular laptop screen sizes to prevent layouts from collapsing.
-6. **Why configure a custom User Agent?**
-   Helps bypass web server blocklists that reject generic automation bots.
-7. **Why use a singleton instance for browser and page?**
-   Saves memory and simplifies code context across files.
-8. **Why load dotenv parameters into numeric variables with `parseInt()`?**
-   Ensures variables like `MAX_STEPS` are typed as integers to avoid loop errors.
-9. **Why wait 2000ms after page loads?**
-   Ensures dynamic Javascript pages have finished rendering before DOM analysis.
-10. **Why use `domcontentloaded` instead of `networkidle` for page load waits?**
-    Dynamic trackers can keep networks busy indefinitely, which would trigger timeouts.
+### Group 1 — Browser & Frontend Elements
+1. **Why query `<a>` tags in `get_page_content()`?**
+   Link elements (`<a>`) contain important interactive paths like video titles (on YouTube) and navigation links. If ignored, the agent is blind to them.
+2. **Why filter elements by `inViewport`?**
+   A page can have hundreds of hidden or out-of-screen links and inputs. Prioritizing elements currently in the viewport reduces token usage and prevents the agent from attempting to click elements that are blocked or off-screen.
+3. **Why strip null/undefined properties from interactive elements?**
+   It minimizes the serialized string length, reducing prompt tokens and staying under OpenRouter's rate limits.
+4. **Why wait 2 seconds after page navigation?**
+   Ensures single-page applications (like React/Vite websites) have completed rendering before the agent attempts to inspect the DOM.
+5. **Why keep the first user message pinned in `trimmedHistory`?**
+   If we trim the history to the last 10 messages, the original task instruction (sent in message 1) would be deleted after step 5, causing the agent to lose its goal.
 
-### Group 2 — Node.js & Javascript Environment
-11. **Why use CommonJS modules over ES modules?**
-    Keeps compatibility high and avoids additional compilation steps.
-12. **Why use Winston over console.log?**
-    Allows logging output to local files as structured JSON while formatting console displays.
-13. **Why use Chalk in console logs?**
-    Color-codes actions (green) and thoughts (blue) to improve readability.
-14. **Why create directories recursively in `fs.mkdirSync`?**
-    Ensures missing nested paths do not trigger execution crashes.
-15. **Why define default paths for `.env` via `path.resolve`?**
-    Prevents execution errors when running scripts from other directories.
-16. **Why use `axios` for API calls instead of `fetch`?**
-    Simplifies request layouts and handles timeouts natively.
-17. **Why implement process exit calls (`process.exit`)?**
-    Exits the process with clear codes to integrate with pipeline runners.
-18. **Why wrap index calls in a self-invoking async function?**
-    Allows using `await` at the top level of CommonJS modules.
-19. **Why export modules via `module.exports`?**
-    Required by CommonJS to expose functions to caller scripts.
-20. **Why use `package-lock.json`?**
-    Locks exact dependency versions to ensure identical runs across environments.
-
-### Group 3 — Playwright Element Manipulation
-21. **Why use `page.fill` inside `send_keys`?**
-    It handles input updates quickly and safely.
-22. **Why fall back to `keyboard.type` in `send_keys`?**
-    Simulates physical keys to trigger custom site Javascript events.
-23. **Why use a 50ms keystroke delay?**
-    Simulates human typing to avoid triggers on security scanners.
-24. **Why configure a 300ms delay after clicking elements?**
-    Allows page animations and updates to process before continuing.
-25. **Why center elements in the viewport before taking screenshots?**
-    Prevents fields from being cropped at the edges of the image.
-26. **Why use `page.$eval` inside `scroll_to_center`?**
-    Executes native `scrollIntoView` directly on elements.
-27. **Why configure `block: 'center'` in scroll settings?**
-    Keeps elements in the middle of the screenshot window.
-28. **Why wrap double-clicks in a custom tool?**
-    Required to interact with complex desktop-like layout cards.
-29. **Why catch exceptions inside `take_screenshot` scrolling?**
-    Ensures screenshots are still captured even if element centering fails.
-30. **Why verify `pageInstance` exists before running browser tools?**
-    Prevents null pointer crashes if tools are called before the browser is opened.
-
-### Group 4 — ReAct Agent Design Choices
-31. **Why use the ReAct pattern?**
-    It combines action generation with reasoning steps to handle dynamic layouts.
-32. **Why limit steps to 20?**
-    Prevents runaway LLM costs if the agent gets stuck in a loop.
-33. **Why extract structural inputs instead of raw HTML?**
-    Compresses context to keep LLM token usage low.
-34. **Why list visible fields in JSON arrays?**
-    Allows the LLM to identify selectors easily.
-35. **Why filter for visible elements in the DOM state?**
-    Hides background elements to prevent the LLM from trying to click invisible fields.
-36. **Why trim text inputs to 60 characters in `get_page_content()`?**
-    Reduces payload sizes while retaining label context.
-37. **Why limit page excerpts to 500 characters?**
-    Reduces noise while preserving essential page metadata.
-38. **Why append actions to `conversationHistory`?**
-    Maintains context of past steps to prevent repeating failed actions.
-39. **Why feed errors back to the LLM?**
-    Allows the agent to self-heal and select alternative buttons or inputs.
-40. **Why include reasoning in the output JSON?**
-    Enforces Chain-of-Thought reasoning to improve decision quality.
-
-### Group 5 — OpenRouter & LLM Parameters
-41. **Why use a temperature of 0.1?**
-    Ensures consistent, predictable JSON schema outputs.
-42. **Why use `openai/gpt-oss-120b:free` or `claude-3.5-haiku`?**
-    They balance cost, latency, and function-calling capabilities.
-43. **Why check API key configurations explicitly in `agent.js`?**
-    Prevents running the loop if the API key is missing.
-44. **Why parse responses using regular expressions first?**
-    Extracts JSON cleanly even if the LLM surrounds it with markdown code fences.
-45. **Why parse raw brace scopes as a fallback?**
-    Recovers JSON object blocks if the LLM skips markdown code formatting.
-46. **Why configure a 60-second API timeout?**
-    Prevents the agent from hanging indefinitely during network drops.
-47. **Why pass authorization headers to OpenRouter?**
-    Required to validate API keys and execute requests.
-48. **Why send HTTP-Referer headers?**
-    Required by OpenRouter to track application metrics.
-49. **Why set `max_tokens` to 1024?**
-    Provides enough room for JSON responses while preventing run-away token generation.
-50. **Why log API errors using `logger.agentError`?**
-    Helps developers debug network issues and bad payloads.
-
-### Group 6 — Error Recovery & Fallbacks
-51. **Why use try-catch blocks around tool dispatch?**
-    Prevents runtime exceptions from crashing the entire orchestrator process.
-52. **Why save screenshots on errors?**
-    Provides visual evidence of page states when actions fail.
-53. **Why name error screenshots after their step count?**
-    Maps failures directly to the corresponding step in the log.
-54. **Why use warning levels for non-fatal errors?**
-    Keeps logs organized without cluttering error files.
-55. **Why catch exceptions when closing browsers?**
-    Ensures the process exits cleanly even if the browser has already closed.
-56. **Why throw error alerts when Chromium fails to launch?**
-    Without a browser, the automation loop cannot run.
-57. **Why allow the LLM to decide when the task is complete?**
-    Dynamic web forms have varying success states that are best evaluated by the LLM.
-58. **Why use `trim()` on task definitions?**
-    Removes leading/trailing whitespaces to keep prompts clean.
-59. **Why slice inputs to a maximum of 15 in `agent.js`?**
-    Keeps payloads focused on the most relevant interactive fields.
-60. **Why limit label array length to 10?**
-    Reduces token counts while retaining target context.
-
-### Group 7 — Absent Features (RAG, Vectors, Embeddings)
-61. **Why doesn't this project implement RAG?**
-    The agent interacts directly with live pages; it does not need to query external documents.
-62. **Why is there no vector database?**
-    We do not generate or search vector embeddings.
-63. **Why are chunking and chunk overlaps absent?**
-    We parse page states directly instead of slicing documents for retrieval.
-64. **Why is there no embedding model?**
-    We don't need semantic vector comparisons; we rely on direct DOM structural data.
-65. **Why is cosine similarity absent?**
-    We evaluate selectors directly rather than matching text queries against vectors.
-66. **Why is hybrid search absent?**
-    We do not search index databases; we scrape live page structures.
-67. **Why are cross encoders and rerankers absent?**
-    We do not rank search results; we process active inputs.
-68. **Why is metadata filtering absent?**
-    The agent works with active DOM contexts directly.
-69. **Why is query expansion absent?**
-    The agent receives explicit user tasks directly.
-70. **Why is HyDE absent?**
-    We do not retrieve documents from a database.
-71. **Why is Corrective RAG absent?**
-    The agent operates in a live browser session rather than a document retrieval environment.
-72. **Why is Agentic RAG absent?**
-    Our agent manages browser actions directly rather than querying databases.
-73. **Why is response caching absent?**
-    Web form automation requires live updates; cached states would cause stale actions.
-74. **Why are streaming responses absent?**
-    We require the complete JSON block to parse tool actions.
-75. **Why are guardrails and evaluations absent?**
-    This is a demonstration script; evaluations are performed manually by reviewing logs and screenshots.
-
-*(For brevity, questions 76–200 are organized into similar functional categories in the master document to provide complete, detailed viva coverage).*
-
----
-
-# SECTION 9 — How Questions
-
-### 1. How does DOM Scraping work?
-It is implemented in `src/tools/browserTools.js` in the `get_page_content()` function. 
-We run `pageInstance.evaluate()` to execute JavaScript in the browser context. This code queries interactive elements using `document.querySelectorAll('input, textarea, select, button')` and maps attributes like tags, types, IDs, names, placeholders, and visibility into a clean array.
-
-### 2. How are LLM responses parsed?
-Implemented in `src/agent/openRouterClient.js` in `parseActionFromResponse()`.
-We use a regex match `text.match(/```(?:json)?\s*([\s\S]*?)```/)` to extract text between markdown code blocks. If that fails, it scans for raw JSON braces `{ ... }` using `text.match(/\{[\s\S]*\}/)` and runs `JSON.parse`.
-
-### 3. How does the agent handle element coordinates?
-The agent can click elements by their CSS selector using `click_element(selector)`, which runs Playwright's `page.click()`. It can also click coordinates using `click_on_screen(x, y)`, which calls `page.mouse.click(x, y)`.
-
-### 4. How does the agent center elements before taking screenshots?
-Before taking a screenshot of an input field, the orchestrator recommends calling `scroll_to_center(selector)`. This runs:
-```javascript
-await pageInstance.$eval(selector, node =>
-  node.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' })
-);
-```
-This centers the element in the viewport to prevent it from being cropped at the edges of the image.
-
-### 5. How are API keys stored?
-API keys are stored in a local `.env` file as `OPENROUTER_API_KEY`. This file is ignored by Git using `.gitignore` to prevent exposing keys.
+### Group 2 — Backend & Queueing
+6. **Why build an Express server backend?**
+   It allows the automation suite to run as a background service, exposing API endpoints for task submission, real-time logging, and screenshot delivery.
+7. **Why implement a queue processor (`isProcessing`)?**
+   Prevents multiple automation runs from running concurrently, which would overload the host machine, spawn conflicting browsers, and exhaust API rate limits.
+8. **Why run `rewriteTask` via the LLM?**
+   It converts fuzzy, conversational user prompts into a structured, numbered browser instruction list, improving the agent's target alignment.
+9. **Why parse the 429 rate limit delay from error messages?**
+   It ensures the script sleeps for the exact duration demanded by the upstream host (e.g. 7.03 seconds) rather than waiting blindly.
 
 ---
 
 # SECTION 10 — Teacher Viva Questions
 
-## Basic Level
-1. **What is a headless browser?**
-   A web browser without a graphical user interface, controlled programmatically to automate tasks.
-2. **What does the ReAct pattern stand for?**
-   Reasoning + Acting.
-3. **What is OpenRouter?**
-   An API gateway that routes LLM requests to different models using a single API key.
-4. **How do you load environment variables in Node.js?**
-   Using the `dotenv` package via `require('dotenv').config()`.
-5. **What is the purpose of `package.json`?**
-   It lists project metadata, scripts, and npm dependencies.
-
-## Intermediate Level
-6. **How does `get_page_content()` prevent token limit issues?**
-   It extracts only interactive DOM nodes and slices page text instead of sending raw HTML.
-7. **What is the difference between `page.fill` and `page.keyboard.type`?**
-   `page.fill` directly sets the element value, whereas `page.keyboard.type` simulates individual keystrokes.
-8. **Why does the agent check `offsetParent !== null`?**
-   To determine if an element is visible in the viewport.
-9. **How does the agent recover from a tool error?**
-   It catches the exception, saves an error screenshot, and sends the error message back to the LLM to adjust its next action.
-10. **What is the purpose of `path.resolve` in `index.js`?**
-    It resolves absolute paths to prevent loading errors when launching the script from other directories.
-
-## Advanced Level
-11. **Explain the regular expressions in `parseActionFromResponse()`.**
-    The first regex extracts text between markdown code blocks, while the fallback regex matches anything between the first `{` and last `}` to find raw JSON.
-12. **Why is temperature set to 0.1 instead of 0?**
-    0.1 provides deterministic results while allowing the model to generate structured output.
-13. **Why do we wait 2 seconds after navigation?**
-    To allow dynamic Javascript applications to finish rendering.
-14. **Why is the browser context isolated?**
-    To ensure each run starts with clean cookies, cache, and storage.
-15. **How would you prevent bot detection on protected sites?**
-    By configuring custom user-agents, viewports, realistic typing speeds, or using proxy rotations.
-
-## Expert Level
-16. **Why did you not use LangChain or AutoGen?**
-    Writing a custom ReAct loop is simpler, has fewer dependencies, and makes the architecture easier to understand.
-17. **How does the LLM know the task is completed?**
-    The LLM triggers the `done()` tool, which signals the loop to exit.
-18. **Why is heuristic mode missing from the codebase despite being in the docs?**
-    *This project does not implement heuristic mode fallback in agent.js.* It throws an error if the API key is missing.
-19. **What are the drawbacks of using LLMs for DOM selector resolution?**
-    Higher latency and token costs compared to static scripts.
-20. **How would you scale this to handle 100 simultaneous tasks?**
-    By running a worker pool with multiple browser contexts using Playwright.
-
-*(The master document contains 300 detailed questions and answers across these levels to ensure comprehensive preparation).*
-
----
-
-# SECTION 11 — Cross Questions
-
-### Dialogue 1: ReAct Loop
-**Teacher**: "What is the ReAct loop?"
-**Student**: "It stands for Reasoning and Acting. The agent gathers page state (Observation), reasons about the next action (Reasoning), and runs a browser action (Acting)."
-**Teacher**: "Where is that in the code?"
-**Student**: "In `src/agent/agent.js` inside the `while` loop of `runAgent()` (lines 119-193)."
-
-### Dialogue 2: Selector Handling
-**Teacher**: "What happens if a button class name changes?"
-**Student**: "The agent fetches the updated DOM structure in the next step, and the LLM identifies the correct button by its text or labels."
-
-### Dialogue 3: Missing Heuristic Fallback
-**Teacher**: "Your README mentions a heuristic fallback mode, where is it?"
-**Student**: "The documentation references a heuristic fallback mode, but it is not implemented in the current code. The agent will throw an error if the API key is missing."
-
----
-
-# SECTION 12 — Explain Every Design Choice
-
-1. **Playwright vs. Selenium**: Playwright provides better built-in waits, supports multiple browsers natively, and has a simpler API.
-2. **OpenRouter vs. Direct APIs**: OpenRouter allows swapping models easily via configuration.
-3. **Winston vs. Console.log**: Winston enables clean console formatting while saving structured JSON logs to disk.
-4. **Low Temperature (0.1)**: Ensures consistent, deterministic JSON tool generation.
+1. **How does your agent communicate with the LLM?**
+   It sends a JSON payload containing the system prompt, page state, and conversation history via a POST request to OpenRouter's HTTP gateway.
+2. **What happens when the API key is rate-limited?**
+   `src/agent/GroqClient.js` catches the 429 status code, extracts the suggested wait time from the error string, pauses execution, and retries the request.
+3. **How does the React frontend display real-time runs?**
+   It runs a polling effect that calls `/run/:id/status` and `/run/:id/logs` to retrieve the latest run state and Winston log file lines.
+4. **Where is the browser context isolated?**
+   Inside `src/tools/browserTools.js#L54`. Every run creates a new context, ensuring no session state leak (clean cache/cookies).
 
 ---
 
 # SECTION 13 — If Teacher Opens the Code
 
 ### File: `src/agent/agent.js`
-- **Lines 15-47**: Defines system instructions and tool schemas.
-- **Lines 93-99**: Verifies that the API key is configured.
-- **Lines 119-193**: The ReAct execution loop.
-- **Lines 168-181**: Catching errors and sending them back to the LLM.
+- **Lines 16–44**: Defines `SYSTEM_PROMPT` dictating the JSON schema: `{ tool, args, reasoning }`.
+- **Lines 122–142**: Implements viewport element selection, compact property mapping, and prompt compression (single-line formats for steps > 1).
+- **Lines 149–157**: Pinned history trimming strategy.
+
+### File: `src/agent/GroqClient.js`
+- **Lines 67–81**: Catches 429 codes, parses delay time using regex, sleeps, and retries.
+- **Lines 93–109**: Parses JSON output from the LLM, extracting code fences or matching curly braces.
 
 ### File: `src/tools/browserTools.js`
-- **Lines 28-68**: Launching the browser.
-- **Lines 99-127**: Centering elements and saving screenshots.
-- **Lines 256-297**: Scraping interactive DOM elements.
-
----
-
-# SECTION 14 — Common Mistakes
-
-- **Incorrectly claiming Heuristic Mode is implemented**: *It is not.* The orchestrator throws an error if the API key is missing.
-- **Confusing page.fill with natural typing**: `page.fill` sets values instantly, while `send_keys` with delay simulates human keystrokes.
-- **Saying RAG is used**: RAG is not implemented in this project.
-
----
-
-# SECTION 15 — Possible Improvements
-
-1. **Self-Healing Selectors**: Store successful selectors locally to bypass LLM calls on subsequent runs.
-2. **True Heuristic Fallback**: Implement the backup script fallback in `agent.js`.
-3. **Parallel Task Execution**: Support running tasks concurrently using multiple browser contexts.
-
----
-
-# SECTION 16 — Research Questions
-
-- **How do you address bot detection?** By using human-like typing speeds, mouse movements, and residential proxies.
-- **How would you benchmark the agent?** By measuring success rates, total steps taken, execution times, and token usage.
-
----
-
-# SECTION 17 — Quick Revision Notes
-
-- **Entry Point**: `src/index.js`
-- **Orchestrator**: `src/agent/agent.js`
-- **API Client**: `src/agent/openRouterClient.js`
-- **Browser Actions**: `src/tools/browserTools.js`
-- **Winston Config**: `src/utils/logger.js`
-- **Default model**: `openai/gpt-oss-120b:free`
-- **Temperature**: `0.1`
-
----
-
-# SECTION 18 — One Page Cheat Sheet
-
-```
-[Entry Point] src/index.js
-  ↓ launches
-[Orchestrator] src/agent/agent.js
-  ↓ ReAct loop
-  ├── [Observation] browserTools.get_page_content()
-  ├── [Reasoning] openRouterClient.chat()
-  └── [Action] browserTools.click_element() / send_keys()
-```
-
----
-
-# SECTION 19 — Viva Confidence Guide
-
-- **Speak clearly and pause**: Let the teacher interrupt if they want to.
-- **Be honest about what is missing**: Frame the missing heuristic mode as a configuration check.
-- **Use absolute paths**: Point directly to the files in the workspace.
+- **Lines 264–305**: Evaluates the DOM page content, queries `input, textarea, select, button, a` elements, and calculates `inViewport`.

@@ -13,39 +13,35 @@ const MAX_STEPS = parseInt(process.env.MAX_STEPS || "20");
 const TARGET_URL =
   process.env.TARGET_URL || "https://ui.shadcn.com/docs/forms/react-hook-form";
 
-const SYSTEM_PROMPT = `You are an expert browser automation agent. Your job is to control a web browser
-to complete tasks by selecting the right tool at each step.
+const SYSTEM_PROMPT = `You are an expert browser automation agent that controls a real web browser to complete tasks.
 
 Available tools:
-- navigate_to_url(url)              : Go to a URL
-- take_screenshot(label, selector)  : Capture the screen. Pass selector to auto-center that element first.
-- scroll(deltaY, selector)          : Scroll the page or scroll an element to center of viewport
-- scroll_to_center(selector)        : Scroll a specific element to the exact center of the viewport
-- click_element(selector)           : Click a CSS selector
-- click_on_screen(x, y)             : Click by pixel coordinates
-- send_keys(text, selector)         : Fill a text input
-- double_click(x, y, selector)      : Double-click
-- get_page_content()                : Get page structure / form elements
-- wait_for_element(selector)        : Wait for an element to appear
-- done(summary)                     : Signal task completion
+- navigate_to_url(url)             : Navigate to a URL
+- click_element(selector)          : Click a CSS selector
+- send_keys(text, selector)        : Type text into an input. Append \\n to submit/press Enter (e.g. "search term\\n").
+- scroll(deltaY, selector)         : Scroll the page or an element into view
+- scroll_to_center(selector)       : Scroll an element to the exact center of the viewport
+- wait_for_element(selector)       : Wait for an element to appear
+- get_page_content()               : Refresh page state (only call this AFTER navigating or waiting — NOT at the start of a step)
+- take_screenshot(label, selector) : Capture screenshot, optionally centered on a selector
+- click_on_screen(x, y)            : Click at pixel coordinates
+- double_click(x, y, selector)     : Double-click
+- done(summary)                    : Signal task is complete
 
-Respond ONLY with a JSON object like:
+CRITICAL RULES:
+1. The current page state (URL, title, inputs, page text) is ALREADY PROVIDED in each message. Do NOT call get_page_content() as your first action — it wastes steps. Use the provided state.
+2. Only call get_page_content() after a navigation, wait, or major action when you need updated info.
+3. To search or submit a form, append \\n to the text in send_keys instead of clicking a separate button.
+4. Prefer short, reliable CSS selectors (IDs, name attributes, aria-labels) over long nested chains.
+5. If a selector fails, try a simpler alternative — do not repeat the same failing selector.
+6. Call done() as soon as the task is successfully completed.
+
+Respond ONLY with a valid JSON object — no extra text:
 {
   "tool": "tool_name",
   "args": { ... },
-  "reasoning": "why you chose this step"
-}
-
-Rules:
-- Always call get_page_content() or take_screenshot() to understand the page before clicking.
-- IMPORTANT: Before taking a screenshot of any input field or form element, ALWAYS call
-  scroll_to_center(selector) first so the element is perfectly centered in the viewport,
-  never stuck at the very top or bottom edge of the screen.
-- You may also pass a selector directly to take_screenshot(label, selector) to center in one step.
-- Use CSS selectors when possible for reliability.
-- The shadcn form preview button opens an interactive form dialog — look for a "Preview" tab or button.
-- Common shadcn form selectors: input[name="username"], input[name="email"], textarea, button[type="submit"].
-- When you have filled all form fields and submitted, call done().`;
+  "reasoning": "brief reason"
+}`;
 
 async function dispatchTool(toolName, args = {}) {
   switch (toolName) {
@@ -92,10 +88,10 @@ async function dispatchTool(toolName, args = {}) {
 }
 
 async function runAgent({ task, targetUrl = TARGET_URL }) {
-  const apiKey = process.env.GROQ_API_KEY;
-  if (!apiKey || apiKey === "your_groq_api_key_here") {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey || apiKey === "your_openrouter_api_key_here") {
     throw new Error(
-      "GROQ_API_KEY is not set. Please configure a valid API key in your .env file.",
+      "OPENROUTER_API_KEY is not set. Please configure a valid API key in your .env file.",
     );
   }
 
@@ -131,22 +127,53 @@ async function runAgent({ task, targetUrl = TARGET_URL }) {
       pageState = { title: "unknown", inputs: [], labels: [] };
     }
 
-    const userMessage = `
-Task: ${task}
-Step: ${stepCount}
-Current URL: ${pageState.url || targetUrl}
-Page title: ${pageState.title || "N/A"}
-Visible inputs: ${JSON.stringify(pageState.inputs?.filter((i) => i.visible).slice(0, 15))}
-Labels: ${JSON.stringify(pageState.labels?.slice(0, 10))}
-Page excerpt: ${pageState.bodyText?.substring(0, 500) || ""}
+    // Select interactive elements in viewport, fallback to all visible if none in viewport
+    const inViewportElements = pageState.inputs?.filter((i) => i.visible && i.inViewport) || [];
+    const elementsToUse = inViewportElements.length > 0
+      ? inViewportElements.slice(0, 15)
+      : (pageState.inputs?.filter((i) => i.visible) || []).slice(0, 10);
 
-What should the agent do next? Respond with the JSON action object.`;
+    // Keep the serialized object compact by removing null/undefined properties
+    const compactElements = elementsToUse.map(e => ({
+      tag: e.tag,
+      id: e.id || undefined,
+      name: e.name || undefined,
+      placeholder: e.placeholder || undefined,
+      text: e.textContent || undefined,
+      aria: e.ariaLabel || undefined
+    }));
+
+    // Compress context: include task only on first step, use single line structure for subsequent steps
+    let userMessage;
+    if (stepCount === 1) {
+      userMessage = `Task: ${task}
+Step: 1
+URL: ${pageState.url || targetUrl}
+Title: ${pageState.title || "N/A"}
+Inputs: ${JSON.stringify(compactElements)}
+Excerpt: ${pageState.bodyText?.substring(0, 500) || ""}`;
+    } else {
+      userMessage = `Step: ${stepCount} | URL: ${pageState.url || targetUrl} | Title: ${pageState.title || "N/A"} | Inputs: ${JSON.stringify(compactElements)} | Excerpt: ${pageState.bodyText?.substring(0, 500) || ""}`;
+    }
 
     conversationHistory.push({ role: "user", content: userMessage });
 
+    // Keep history trimmed to stay within TPM/RPM limits.
+    // Always preserve the very first message (which contains the full task description)
+    // so the agent never forgets the goal, then append the last 9 messages.
+    let trimmedHistory;
+    if (conversationHistory.length <= 10) {
+      trimmedHistory = [...conversationHistory];
+    } else {
+      trimmedHistory = [
+        conversationHistory[0],
+        ...conversationHistory.slice(-9)
+      ];
+    }
+
     let action;
     try {
-      const aiResponse = await chat(conversationHistory, SYSTEM_PROMPT);
+      const aiResponse = await chat(trimmedHistory, SYSTEM_PROMPT);
       conversationHistory.push({ role: "assistant", content: aiResponse });
 
       logger.agentThink(aiResponse.substring(0, 200));
@@ -157,7 +184,7 @@ What should the agent do next? Respond with the JSON action object.`;
         continue;
       }
     } catch (err) {
-      logger.agentError("AI call failed", err);
+      logger.agentError(`AI call failed: ${err.message}`);
       continue;
     }
 

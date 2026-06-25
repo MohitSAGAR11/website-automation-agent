@@ -268,18 +268,35 @@ async function get_page_content() {
 
   try {
     const info = await pageInstance.evaluate(() => {
-      // Collect all interactive elements
-      const inputs = Array.from(document.querySelectorAll('input, textarea, select, button')).map(el => ({
-        tag: el.tagName.toLowerCase(),
-        type: el.type || null,
-        id: el.id || null,
-        name: el.name || null,
-        placeholder: el.placeholder || null,
-        className: el.className?.substring(0, 80) || null,
-        visible: el.offsetParent !== null,
-        textContent: el.textContent?.trim().substring(0, 60) || null,
-        ariaLabel: el.getAttribute('aria-label') || null
-      }));
+      // Collect all interactive elements (inputs, buttons, links)
+      const inputs = Array.from(document.querySelectorAll('input, textarea, select, button, a')).map(el => {
+        const rect = el.getBoundingClientRect();
+        const inViewport = rect.top >= 0 && 
+                           rect.left >= 0 && 
+                           rect.bottom <= (window.innerHeight || document.documentElement.clientHeight) && 
+                           rect.right <= (window.innerWidth || document.documentElement.clientWidth);
+        
+        // For link elements, ignore them if they have no text content, aria-label, or title (likely decorative or layout links)
+        const tag = el.tagName.toLowerCase();
+        const textContent = el.textContent?.trim().substring(0, 100) || '';
+        const ariaLabel = el.getAttribute('aria-label') || el.getAttribute('title') || '';
+        if (tag === 'a' && !textContent && !ariaLabel) {
+          return null;
+        }
+
+        return {
+          tag,
+          type: el.type || null,
+          id: el.id || null,
+          name: el.name || null,
+          placeholder: el.placeholder || null,
+          className: el.className?.substring(0, 80) || null,
+          visible: el.offsetParent !== null,
+          inViewport,
+          textContent: textContent || null,
+          ariaLabel: ariaLabel || null
+        };
+      }).filter(el => el !== null);
 
       // Collect form element labels
       const labels = Array.from(document.querySelectorAll('label')).map(l => ({
@@ -290,7 +307,7 @@ async function get_page_content() {
       return {
         title: document.title,
         url: window.location.href,
-        bodyText: document.body.innerText?.substring(0, 2000),
+        bodyText: document.body.innerText?.substring(0, 3000),
         inputs,
         labels
       };

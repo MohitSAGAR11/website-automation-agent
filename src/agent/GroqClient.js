@@ -2,82 +2,88 @@ const axios = require("axios");
 const logger = require("../utils/logger");
 require("dotenv").config();
 
-const GROQ_API_KEY = process.env.GROQ_API_KEY;
-const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
-const GROQ_BASE_URL = "https://api.groq.com/openai/v1";
+const API_KEY = process.env.OPENROUTER_API_KEY;
+const MODEL =
+  process.env.OPENROUTER_MODEL || "meta-llama/llama-3.3-70b-instruct:free";
+const BASE_URL = "https://openrouter.ai/api/v1";
 
-const GROQ_MODEL_EXPORT = GROQ_MODEL;
+// Exported as GROQ_MODEL so agent.js doesn't need changes
+const GROQ_MODEL = MODEL;
 
-if (!GROQ_API_KEY || GROQ_API_KEY === "your_groq_api_key_here") {
+if (!API_KEY || API_KEY === "your_openrouter_api_key_here") {
   logger.warn(
-    "GROQ_API_KEY is not set! The agent will not be able to make AI calls.\n" +
-      "  Get a free key at https://console.groq.com and set it in .env",
+    "OPENROUTER_API_KEY is not set! Set it in .env to enable AI-driven automation.\n" +
+      "  Get a free key at https://openrouter.ai",
   );
 }
-
-const RETRY_DELAYS_MS = [2000, 5000, 10000]; // backoff for 429s
 
 async function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function chat(messages, systemPrompt = "") {
-  if (!GROQ_API_KEY || GROQ_API_KEY === "your_groq_api_key_here") {
-    throw new Error("GROQ_API_KEY not configured");
+  if (!API_KEY || API_KEY === "your_openrouter_api_key_here") {
+    throw new Error("OPENROUTER_API_KEY not configured");
   }
 
   const payload = {
-    model: GROQ_MODEL,
+    model: MODEL,
     messages: [
       ...(systemPrompt ? [{ role: "system", content: systemPrompt }] : []),
       ...messages,
     ],
     temperature: 0.1,
-    max_tokens: 1024,
+    max_tokens: 512,
   };
 
-  logger.debug("Sending request to Groq", {
-    model: GROQ_MODEL,
-    msgCount: messages.length,
-  });
+  const MAX_RETRIES = 4;
 
-  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
       const response = await axios.post(
-        `${GROQ_BASE_URL}/chat/completions`,
+        `${BASE_URL}/chat/completions`,
         payload,
         {
           headers: {
-            Authorization: `Bearer ${GROQ_API_KEY}`,
+            Authorization: `Bearer ${API_KEY}`,
             "Content-Type": "application/json",
+            "HTTP-Referer": "https://github.com/automation-agent",
+            "X-Title": "Website Automation Agent",
           },
-          timeout: 30000,
+          timeout: 60000,
         },
       );
 
       const content = response.data?.choices?.[0]?.message?.content;
-      if (!content) throw new Error("Empty response from Groq");
+      if (!content) throw new Error("Empty response from API");
 
-      logger.debug("Groq response received", { length: content.length });
+      logger.debug("API response received", { length: content.length });
       return content;
     } catch (err) {
       const status = err.response?.status;
       const errMsg =
         err.response?.data?.error?.message || err.message || String(err);
 
-      if (status === 429 && attempt < RETRY_DELAYS_MS.length) {
-        const waitMs = RETRY_DELAYS_MS[attempt];
+      if (status === 429 && attempt < MAX_RETRIES - 1) {
+        // Parse the suggested wait time from error message e.g. "Please try again in 7.03s"
+        const retryMatch = errMsg.match(/try again in (\d+\.?\d*)s/i);
+        const suggestedWait = retryMatch
+          ? Math.ceil(parseFloat(retryMatch[1]) * 1000) + 1000
+          : null;
+        const backoffWait = [8000, 20000, 40000][attempt] || 40000;
+        const waitMs = suggestedWait || backoffWait;
+
         logger.warn(
-          `Groq rate-limited (429). Waiting ${waitMs / 1000}s before retry ${attempt + 1}/${RETRY_DELAYS_MS.length}...`,
+          `Rate-limited (429). Waiting ${(waitMs / 1000).toFixed(1)}s before retry ${attempt + 1}/${MAX_RETRIES - 1}...`,
         );
         await sleep(waitMs);
         continue;
       }
 
       if (err.response) {
-        logger.agentError(`Groq API error: ${status}: ${errMsg}`);
+        logger.agentError(`API error ${status}: ${errMsg}`);
       } else {
-        logger.agentError(`Groq request failed: ${errMsg}`);
+        logger.agentError(`Request failed: ${errMsg}`);
       }
       throw new Error(errMsg);
     }
@@ -96,12 +102,10 @@ function parseActionFromResponse(text) {
   if (objMatch) {
     try {
       return JSON.parse(objMatch[0]);
-    } catch (_) {
-      /* fall through */
-    }
+    } catch (_) {}
   }
 
   return null;
 }
 
-module.exports = { chat, parseActionFromResponse, GROQ_MODEL: GROQ_MODEL_EXPORT };
+module.exports = { chat, parseActionFromResponse, GROQ_MODEL };
