@@ -1,14 +1,13 @@
 const axios = require("axios");
 const logger = require("../utils/logger");
-require("dotenv").config();
+// dotenv is loaded once in server.js — no need to load it again here
 
 const API_KEY = process.env.OPENROUTER_API_KEY;
 const MODEL =
   process.env.OPENROUTER_MODEL || "meta-llama/llama-3.3-70b-instruct:free";
 const BASE_URL = "https://openrouter.ai/api/v1";
 
-// Exported as GROQ_MODEL so agent.js doesn't need changes
-const GROQ_MODEL = MODEL;
+const OPENROUTER_MODEL = MODEL;
 
 if (!API_KEY || API_KEY === "your_openrouter_api_key_here") {
   logger.warn(
@@ -21,7 +20,7 @@ async function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function chat(messages, systemPrompt = "") {
+async function chat(messages, systemPrompt = "", maxTokens = 200) {
   if (!API_KEY || API_KEY === "your_openrouter_api_key_here") {
     throw new Error("OPENROUTER_API_KEY not configured");
   }
@@ -33,7 +32,7 @@ async function chat(messages, systemPrompt = "") {
       ...messages,
     ],
     temperature: 0,      // deterministic — faster token generation
-    max_tokens: 200,     // JSON action fits in <100 tokens; 200 is generous
+    max_tokens: maxTokens, // caller controls budget: 200 for agent loop, 800 for rewriter
   };
 
   const MAX_RETRIES = 3;
@@ -113,4 +112,4 @@ function parseActionFromResponse(text) {
   return null;
 }
 
-module.exports = { chat, parseActionFromResponse, GROQ_MODEL };
+module.exports = { chat, parseActionFromResponse, OPENROUTER_MODEL };

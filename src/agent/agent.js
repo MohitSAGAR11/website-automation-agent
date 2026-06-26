@@ -2,12 +2,10 @@ const tools = require("../tools/browserTools");
 const {
   chat,
   parseActionFromResponse,
-  GROQ_MODEL,
-} = require("./GroqClient");
+  OPENROUTER_MODEL,
+} = require("./OpenRouterClient");
 const logger = require("../utils/logger");
-require("dotenv").config({
-  path: require("path").resolve(__dirname, "..", "..", ".env"),
-});
+// dotenv is loaded once in server.js — no need to load it again here
 
 const MAX_STEPS = parseInt(process.env.MAX_STEPS || "30");
 const TARGET_URL =
@@ -86,7 +84,7 @@ async function dispatchTool(toolName, args = {}) {
   }
 }
 
-async function runAgent({ task, targetUrl = TARGET_URL }) {
+async function runAgent({ task, targetUrl = TARGET_URL, signal = null }) {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey || apiKey === "your_openrouter_api_key_here") {
     throw new Error(
@@ -100,7 +98,7 @@ async function runAgent({ task, targetUrl = TARGET_URL }) {
   logger.info("Task:");
   task.split("\n").forEach((line) => logger.info(`  ${line}`));
   logger.info(`Target  : ${targetUrl}`);
-  logger.info(`Model   : ${GROQ_MODEL}`);
+  logger.info(`Model   : ${OPENROUTER_MODEL}`);
   logger.info(`Mode    : AI-Driven`);
   logger.info("─────────────────────────────────────────────────────");
 
@@ -128,6 +126,11 @@ async function runAgent({ task, targetUrl = TARGET_URL }) {
 
   // ── Step 2: Agent loop ────────────────────────────────────────────────────
   while (stepCount < MAX_STEPS) {
+    // Check for cancellation signal before each step
+    if (signal?.aborted) {
+      logger.warn('Agent run cancelled by server request.');
+      break;
+    }
     stepCount++;
     logger.info(
       `\n─── Step ${stepCount}/${MAX_STEPS} ─────────────────────────────`,

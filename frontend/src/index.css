@@ -142,16 +142,6 @@ body {
   background: var(--text-muted);
 }
 
-.status-badge.rewriting {
-  background: rgba(6, 182, 212, 0.1);
-  color: var(--accent-info);
-  border-color: rgba(6, 182, 212, 0.2);
-  box-shadow: 0 0 10px rgba(6, 182, 212, 0.15);
-}
-.status-badge.rewriting .dot {
-  background: var(--accent-info);
-  animation: pulse-glow 1.5s infinite ease-in-out;
-}
 
 .status-badge.running {
   background: rgba(99, 102, 241, 0.1);
@@ -182,6 +172,25 @@ body {
 }
 .status-badge.failed .dot {
   background: var(--accent-error);
+}
+
+.status-badge.cancelled {
+  background: rgba(245, 158, 11, 0.1);
+  color: var(--accent-warning);
+  border-color: rgba(245, 158, 11, 0.2);
+  box-shadow: 0 0 10px rgba(245, 158, 11, 0.15);
+}
+.status-badge.cancelled .dot {
+  background: var(--accent-warning);
+}
+
+.status-badge.interrupted {
+  background: rgba(107, 114, 128, 0.1);
+  color: #9ca3af;
+  border-color: rgba(107, 114, 128, 0.2);
+}
+.status-badge.interrupted .dot {
+  background: #6b7280;
 }
 
 /* Dashboard Workspace layout */

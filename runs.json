@@ -1,0 +1,42 @@
+{
+  "run_1782491558125_51ytm": {
+    "id": "run_1782491558125_51ytm",
+    "task": "search taras song play the first video\n",
+    "targetUrl": "https://www.youtube.com/",
+    "status": "rewriting",
+    "rewrittenTask": null,
+    "error": null,
+    "createdAt": "2026-06-26T16:32:38.125Z",
+    "completedAt": null
+  },
+  "run_1782491615869_nmqg4": {
+    "id": "run_1782491615869_nmqg4",
+    "task": "search taras and play the first video",
+    "targetUrl": "https://www.youtube.com",
+    "status": "running",
+    "rewrittenTask": "1. Navigate to the YouTube website.\n2. Locate the search bar at the top of the page.\n3. Type \"taras\" into the search bar.\n4. Click the search button or press Enter to initiate the search.\n5. Wait for the search results to load.\n6. Locate the first video in the search results list.\n7. Click on the first video to start playback.\n8. Confirm that the video is playing.",
+    "error": null,
+    "createdAt": "2026-06-26T16:33:35.869Z",
+    "completedAt": null
+  },
+  "run_1782491937763_nrg5q": {
+    "id": "run_1782491937763_nrg5q",
+    "task": "search taras song and play the first video\n ",
+    "targetUrl": "https://www.youtube.com/",
+    "status": "running",
+    "rewrittenTask": "1. Navigate to \"https://www.youtube.com\"\n2. Locate the search input field (usually id=\"search\" or name=\"search_query\")\n3. Type \"taras song\" into the search input field\n4. Submit the search (press Enter or click the search button with id=\"search-icon-legacy\")\n5. Wait for the search results page to load (wait for element with id=\"contents\" or ytd-video-renderer)\n6. Locate the first video result (first ytd-video-renderer element)\n7. Click the title or thumbnail link of the first video result\n8. Wait for the video player to load (wait for element with class=\"html5-video-player\" or video tag)\n9. Verify video is playing (check video element 'paused' property is false or play button shows pause icon)",
+    "error": null,
+    "createdAt": "2026-06-26T16:38:57.763Z",
+    "completedAt": null
+  },
+  "run_1782492413410_o1zrx": {
+    "id": "run_1782492413410_o1zrx",
+    "task": "Navigate to the shadcn/ui React Hook Form documentation page.\nFind the interactive form example.\nFill Username: Mohit Sagar, Bug Title: UI Component Bug Report, Description: Dropdown loses focus when scrolling inside modal.\nClick the Submit button and confirm success.",
+    "targetUrl": "https://ui.shadcn.com/docs/forms/react-hook-form",
+    "status": "success",
+    "rewrittenTask": "Navigate to the shadcn/ui React Hook Form documentation page.\nFind the interactive form example.\nFill Username: Mohit Sagar, Bug Title: UI Component Bug Report, Description: Dropdown loses focus when scrolling inside modal.\nClick the Submit button and confirm success.",
+    "error": null,
+    "createdAt": "2026-06-26T16:46:53.410Z",
+    "completedAt": "2026-06-26T16:51:56.581Z"
+  }
+}

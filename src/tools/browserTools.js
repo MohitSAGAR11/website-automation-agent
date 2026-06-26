@@ -2,20 +2,12 @@ const { chromium } = require('playwright');
 const path = require('path');
 const fs = require('fs');
 const logger = require('../utils/logger');
-require('dotenv').config({ path: require('path').resolve(__dirname, '..', '..', '.env') });
+// dotenv is loaded once in server.js — no need to load it again here
 
-
-
-const SCREENSHOT_DIR = process.env.SCREENSHOT_DIR || './screenshots';
 const BROWSER_TIMEOUT = parseInt(process.env.BROWSER_TIMEOUT || '30000');
 const VIEWPORT_WIDTH = parseInt(process.env.VIEWPORT_WIDTH || '1280');
 const VIEWPORT_HEIGHT = parseInt(process.env.VIEWPORT_HEIGHT || '800');
 const HEADLESS = process.env.HEADLESS !== 'false';
-
-// Ensure screenshot directory exists
-if (!fs.existsSync(SCREENSHOT_DIR)) {
-  fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
-}
 
 // ─── Browser State (module-level singleton) ───────────────────────────────────
 
@@ -30,7 +22,6 @@ async function open_browser() {
   screenshotCounter = 0; // Reset screenshot counter for the new run
 
   try {
-    const executablePath = process.env.CHROME_PATH || '/opt/google/chrome/chrome';
     const launchOptions = {
       headless: HEADLESS,
       args: [
@@ -42,11 +33,10 @@ async function open_browser() {
       ]
     };
 
-    // Try system Chrome first, fall back to Playwright bundled
-    if (fs.existsSync(executablePath)) {
-      launchOptions.executablePath = executablePath;
-    } else if (fs.existsSync('/opt/pw-browsers/chromium-1194/chrome-linux/chrome')) {
-      launchOptions.executablePath = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
+    // Use CHROME_PATH env var if explicitly set, otherwise let Playwright pick its bundled browser
+    const chromePath = process.env.CHROME_PATH;
+    if (chromePath && fs.existsSync(chromePath)) {
+      launchOptions.executablePath = chromePath;
     }
 
     browserInstance = await chromium.launch(launchOptions);
@@ -54,7 +44,7 @@ async function open_browser() {
     const context = await browserInstance.newContext({
       viewport: { width: VIEWPORT_WIDTH, height: VIEWPORT_HEIGHT },
       userAgent:
-        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     });
 
     pageInstance = await context.newPage();

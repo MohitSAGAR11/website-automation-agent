@@ -5,7 +5,6 @@ const fs = require("fs");
 const winston = require("winston");
 const logger = require("./utils/logger");
 const { runAgent } = require("./agent/agent");
-const { chat } = require("./agent/GroqClient");
 
 require("dotenv").config({ path: path.resolve(__dirname, "..", ".env") });
 
@@ -22,39 +21,15 @@ if (!fs.existsSync(screenshotsDir)) {
 }
 app.use("/screenshots", express.static(screenshotsDir));
 
-// In-memory runs database
+// ─── In-memory run store (session only, no persistence) ───────────────────────
 const runs = {};
 const queue = [];
 let isProcessing = false;
 
-// Task rewriter function using OpenRouter chat helper
-async function rewriteTask(task) {
-  const prompt = `You are an expert browser automation planner.
-Your task is to take a raw user request for a website automation agent and rewrite it into a numbered, step-by-step plan.
-Keep the plan precise, actionable, and focus on browser actions (navigation, finding elements, filling inputs, clicking buttons, confirming success).
-Ensure all steps are numbered (e.g., "1. ... \\n2. ...").
-Do NOT include any preamble, introduction, explanation, or markdown formatting other than the numbered list.
+// Per-run abort controllers for cancellation
+const abortControllers = {};
 
-Input task: "${task}"
-
-Numbered plan:`;
-
-  try {
-    const response = await chat(
-      [{ role: "user", content: prompt }],
-      "You are a precise browser automation planner.",
-    );
-    return response.trim();
-  } catch (err) {
-    logger.error(
-      "Failed to rewrite task via LLM, falling back to original:",
-      err,
-    );
-    throw new Error(`LLM Rewrite failed: ${err.message}`);
-  }
-}
-
-// Queue processor
+// ─── Queue processor ──────────────────────────────────────────────────────────
 async function processQueue() {
   if (isProcessing || queue.length === 0) return;
   isProcessing = true;
@@ -67,7 +42,7 @@ async function processQueue() {
     return;
   }
 
-  // Setup run-specific logging path and transport
+  // Setup run-specific log file
   const runLogPath = path.resolve(__dirname, "..", "logs", `run_${runId}.log`);
   const logsDir = path.dirname(runLogPath);
   if (!fs.existsSync(logsDir)) {
@@ -93,51 +68,42 @@ async function processQueue() {
 
   logger.add(runTransport);
 
+  // AbortController so this run can be cancelled
+  const controller = new AbortController();
+  abortControllers[runId] = controller;
+
   try {
-    // Phase 1: Rewriting
-    run.status = "rewriting";
-    logger.info(`Starting execution for run ${runId}`);
-    logger.info(`Rewriting task via LLM...`);
-
-    const rewritten = await rewriteTask(run.task);
-    run.rewrittenTask = rewritten;
-    logger.info(`Task successfully rewritten:\n${rewritten}`);
-
-    // Phase 2: Running
     run.status = "running";
+    logger.info(`Starting execution for run ${runId}`);
     logger.info(`Launching browser automation agent against: ${run.targetUrl}`);
 
-    // Configure the screenshot dir environment variable for browserTools
+    // Point browserTools at a run-specific screenshot subdirectory
     process.env.SCREENSHOT_DIR = path.resolve(screenshotsDir, runId);
 
-    // Call the original agent logic with rewritten task
     await runAgent({
-      task: rewritten,
+      task: run.task,
       targetUrl: run.targetUrl,
+      signal: controller.signal,
     });
 
-    run.status = "success";
-    logger.info(`Run ${runId} completed successfully.`);
+    run.status = controller.signal.aborted ? "cancelled" : "success";
+    logger.info(`Run ${runId} ${run.status}.`);
   } catch (err) {
-    run.status = "failed";
+    run.status = controller.signal.aborted ? "cancelled" : "failed";
     run.error = err.message;
     logger.error(`Run ${runId} failed: ${err.message}`);
   } finally {
-    // Clean up Winston transport
-    try {
-      logger.remove(runTransport);
-    } catch (_) {}
-
+    delete abortControllers[runId];
+    try { logger.remove(runTransport); } catch (_) {}
     run.completedAt = new Date();
     isProcessing = false;
-    // Process next item in queue
     processQueue();
   }
 }
 
-// ─── API Endpoints ───────────────────────────────────────────────────────────
+// ─── API Endpoints ────────────────────────────────────────────────────────────
 
-// POST /run — Triggers agent execution asynchronously
+// POST /run — Start a new agent run
 app.post("/run", (req, res) => {
   const { task, target_url } = req.body;
   if (!task || !target_url) {
@@ -153,79 +119,93 @@ app.post("/run", (req, res) => {
     task,
     targetUrl: target_url,
     status: "pending",
-    rewrittenTask: null,
     error: null,
     createdAt: new Date(),
     completedAt: null,
   };
 
   queue.push(runId);
-  processQueue(); // Start queue processing if idle
+  processQueue();
 
   return res.status(202).json({ run_id: runId });
 });
 
-// GET /run/:run_id/status — Get status of the run
-app.get("/run/:run_id/status", (req, res) => {
+// POST /run/:run_id/cancel — Cancel a running or queued run
+app.post("/run/:run_id/cancel", (req, res) => {
   const { run_id } = req.params;
   const run = runs[run_id];
+
   if (!run) {
     return res.status(404).json({ error: "Run not found" });
   }
+
+  if (!["pending", "running"].includes(run.status)) {
+    return res
+      .status(400)
+      .json({ error: `Run is already in terminal state: ${run.status}` });
+  }
+
+  // Remove from queue if not yet started
+  const queueIdx = queue.indexOf(run_id);
+  if (queueIdx !== -1) {
+    queue.splice(queueIdx, 1);
+    run.status = "cancelled";
+    run.completedAt = new Date();
+    logger.info(`Run ${run_id} cancelled before start.`);
+    return res.json({ message: "Run cancelled (was queued, not yet started)" });
+  }
+
+  // Signal the running agent to stop
+  const controller = abortControllers[run_id];
+  if (controller) {
+    controller.abort();
+    logger.info(`Abort signal sent to run ${run_id}.`);
+    return res.json({ message: "Cancellation signal sent to running agent" });
+  }
+
+  return res.status(500).json({ error: "Could not cancel run" });
+});
+
+// GET /run/:run_id/status — Poll run status
+app.get("/run/:run_id/status", (req, res) => {
+  const run = runs[req.params.run_id];
+  if (!run) return res.status(404).json({ error: "Run not found" });
   return res.json(run);
 });
 
-// GET /run/:run_id/logs — Get logs so far
+// GET /run/:run_id/logs — Fetch live logs
 app.get("/run/:run_id/logs", (req, res) => {
-  const { run_id } = req.params;
-  const run = runs[run_id];
-  if (!run) {
-    return res.status(404).json({ error: "Run not found" });
-  }
+  const run = runs[req.params.run_id];
+  if (!run) return res.status(404).json({ error: "Run not found" });
 
-  const runLogPath = path.resolve(__dirname, "..", "logs", `run_${run_id}.log`);
-  if (!fs.existsSync(runLogPath)) {
-    return res.json({ logs: "" });
-  }
+  const runLogPath = path.resolve(__dirname, "..", "logs", `run_${req.params.run_id}.log`);
+  if (!fs.existsSync(runLogPath)) return res.json({ logs: "" });
 
   try {
-    const logs = fs.readFileSync(runLogPath, "utf8");
-    return res.json({ logs });
-  } catch (err) {
+    return res.json({ logs: fs.readFileSync(runLogPath, "utf8") });
+  } catch (_) {
     return res.status(500).json({ error: "Failed to read logs" });
   }
 });
 
-// GET /run/:run_id/screenshots — Get screenshots taken during run
+// GET /run/:run_id/screenshots — List screenshots for a run
 app.get("/run/:run_id/screenshots", (req, res) => {
-  const { run_id } = req.params;
-  const run = runs[run_id];
-  if (!run) {
-    return res.status(404).json({ error: "Run not found" });
-  }
+  const run = runs[req.params.run_id];
+  if (!run) return res.status(404).json({ error: "Run not found" });
 
-  const runScreenshotDir = path.resolve(screenshotsDir, run_id);
-  if (!fs.existsSync(runScreenshotDir)) {
-    return res.json({ screenshots: [] });
-  }
+  const runScreenshotDir = path.resolve(screenshotsDir, req.params.run_id);
+  if (!fs.existsSync(runScreenshotDir)) return res.json({ screenshots: [] });
 
   try {
     const files = fs.readdirSync(runScreenshotDir);
-    const pngFiles = files.filter((f) => f.toLowerCase().endsWith(".png"));
-    // Sort files chronologically by prefix padded number
-    const sortedFiles = pngFiles.sort((a, b) => a.localeCompare(b));
-    const urls = sortedFiles.map((file) => `/screenshots/${run_id}/${file}`);
+    const urls = files
+      .filter((f) => f.toLowerCase().endsWith(".png"))
+      .sort((a, b) => a.localeCompare(b))
+      .map((f) => `/screenshots/${req.params.run_id}/${f}`);
     return res.json({ screenshots: urls });
-  } catch (err) {
+  } catch (_) {
     return res.status(500).json({ error: "Failed to retrieve screenshots" });
   }
-});
-
-// GET /runs — Get history list (helpful for dashboard/persistence)
-app.get("/runs", (req, res) => {
-  return res.json(
-    Object.values(runs).sort((a, b) => b.createdAt - a.createdAt),
-  );
 });
 
 app.listen(PORT, () => {
